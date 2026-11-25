@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Platform runtime: ZTX16 subsystems. Must not reference SDL3, OpenGL or any host technology. -->
+  <PropertyGroup>
+    <RootNamespace>ZTX16</RootNamespace>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="ZTX16.Host" />
+    <InternalsVisibleTo Include="ZTX16.Tests" />
+  </ItemGroup>
+</Project>

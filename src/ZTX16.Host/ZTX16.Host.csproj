@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Reference host: SDL3 window/input/audio, presentation through SDL's OpenGL renderer. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>ZTX16.Host</AssemblyName>
+    <RootNamespace>ZTX16.Host</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="ppy.SDL3-CS" Version="2026.1002.1" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ZTX16.Platform\ZTX16.Platform.csproj" />
+  </ItemGroup>
+</Project>
