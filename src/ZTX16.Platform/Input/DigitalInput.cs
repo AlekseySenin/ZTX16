@@ -1,4 +1,4 @@
-namespace ZTX16.Input;
+namespace ZTX16.Platform.Input;
 
 /// <summary>
 /// State of one digital input for the current tick: whether it is held, and whether it

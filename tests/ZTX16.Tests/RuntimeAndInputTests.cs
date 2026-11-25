@@ -1,5 +1,5 @@
-using ZTX16.Input;
-using ZTX16.Runtime;
+using ZTX16.Platform.Input;
+using ZTX16.Platform.Runtime;
 
 namespace ZTX16.Tests;
 

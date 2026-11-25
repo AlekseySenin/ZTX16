@@ -1,8 +1,8 @@
-using ZTX16.Audio;
-using ZTX16.Graphics;
-using ZTX16.Input;
+using ZTX16.Platform.Audio;
+using ZTX16.Platform.Graphics;
+using ZTX16.Platform.Input;
 
-namespace ZTX16.Runtime;
+namespace ZTX16.Platform.Runtime;
 
 /// <summary>
 /// One running ZTX16 session: the machine subsystems plus the program being executed.

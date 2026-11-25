@@ -143,7 +143,7 @@ Other source languages may target the ZTX16 executable directly without going th
 ### Platform API binding
 
 - Cartridge code reaches the machine only through a **syscall table**: numbered platform operations implemented by the runtime.
-- The platform API is described once. From that description the toolchain generates both the C# SDK stubs that cartridge code compiles against and the VM-side bindings.
+- The platform API is described once, as `[Syscall("name")]` declarations in the `ZTX16.Sdk` assembly that cartridge code compiles against. The toolchain takes syscall names from these declarations; the runtime takes syscall signatures from them and fails at startup if any declared syscall lacks an implementation. (Implemented this way instead of generating stubs, with the same single-source guarantee.)
 - The syscall table is the sandbox boundary: an operation that is not in the table does not exist for the cartridge.
 - Platform APIs called from the VM should be coarse-grained (draw a sprite, a tile region or a rectangle) rather than per-pixel, so that hot loops run natively in the runtime.
 

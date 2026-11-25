@@ -1,4 +1,4 @@
-namespace ZTX16.Graphics;
+namespace ZTX16.Platform.Graphics;
 
 /// <summary>
 /// A Display Layer: the 256×256 window that exposes a region of its corresponding

@@ -1,4 +1,4 @@
-namespace ZTX16.Graphics;
+namespace ZTX16.Platform.Graphics;
 
 /// <summary>
 /// A color from the ZTX16 global color space: 512 colors encoded as RGB 3:3:3.

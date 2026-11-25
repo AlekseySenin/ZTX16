@@ -1,18 +1,4 @@
-namespace ZTX16.Input;
-
-/// <summary>Mouse buttons.</summary>
-/// <remarks>Numeric values are executable ABI: append members only, never reorder.</remarks>
-public enum MouseButton
-{
-    /// <summary>Left button.</summary>
-    Left,
-
-    /// <summary>Right button.</summary>
-    Right,
-
-    /// <summary>Middle button.</summary>
-    Middle,
-}
+namespace ZTX16.Platform.Input;
 
 /// <summary>
 /// Mouse input. Positions are ZTX16 screen coordinates: (0,0) is the lower-left pixel

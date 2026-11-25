@@ -1,6 +1,6 @@
-using ZTX16.Execution;
-using ZTX16.Input;
-using ZTX16.Runtime;
+using ZTX16.Platform.Execution;
+using ZTX16.Platform.Input;
+using ZTX16.Platform.Runtime;
 using ZTX16.VM;
 
 namespace ZTX16.Tests;

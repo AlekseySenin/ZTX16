@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Toolchain: translates a compiled cartridge IL assembly into a ZTX16 executable.
+       The IL assembly is an intermediate artifact; it never ships and never runs. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>ZTX16.Toolchain</RootNamespace>
+    <AssemblyName>ztx16c</AssemblyName>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ZTX16.Abi\ZTX16.Abi.csproj" />
+  </ItemGroup>
+</Project>

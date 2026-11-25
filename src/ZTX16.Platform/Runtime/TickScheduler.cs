@@ -1,4 +1,4 @@
-namespace ZTX16.Runtime;
+namespace ZTX16.Platform.Runtime;
 
 /// <summary>
 /// Decides when simulation ticks run at the nominal 60 Hz rate.

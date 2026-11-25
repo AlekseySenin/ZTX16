@@ -1,4 +1,4 @@
-namespace ZTX16.Graphics;
+namespace ZTX16.Platform.Graphics;
 
 /// <summary>
 /// The ZTX16 graphics hardware: a 256×256 logical display, a global 32-entry palette,

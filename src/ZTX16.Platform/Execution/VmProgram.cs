@@ -1,7 +1,7 @@
-using ZTX16.Runtime;
+using ZTX16.Platform.Runtime;
 using ZTX16.VM;
 
-namespace ZTX16.Execution;
+namespace ZTX16.Platform.Execution;
 
 /// <summary>
 /// Runs a ZTX16 executable in the VM, driving its lifecycle exports from the runtime loop.

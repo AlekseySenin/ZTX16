@@ -1,4 +1,4 @@
-namespace ZTX16.Audio;
+namespace ZTX16.Platform.Audio;
 
 /// <summary>
 /// The ZTX16 Audio Engine: owns synthesis and mixing and produces the PCM stream the

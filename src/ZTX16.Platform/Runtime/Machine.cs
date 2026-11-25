@@ -1,4 +1,4 @@
-namespace ZTX16;
+namespace ZTX16.Platform;
 
 /// <summary>
 /// The small platform-facing Machine API: time, exit and suspend requests.

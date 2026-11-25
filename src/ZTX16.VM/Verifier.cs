@@ -348,11 +348,13 @@ public static class Verifier
         private static (VmType Input, int Arity, VmType Output)? UnaryOrBinary(OpCode op) => op switch
         {
             OpCode.AddI32 or OpCode.SubI32 or OpCode.MulI32 or OpCode.DivI32 or OpCode.RemI32
+                or OpCode.DivUnI32 or OpCode.RemUnI32
                 or OpCode.AndI32 or OpCode.OrI32 or OpCode.XorI32
                 or OpCode.ShlI32 or OpCode.ShrI32 or OpCode.ShrUnI32 => (VmType.I32, 2, VmType.I32),
             OpCode.NegI32 or OpCode.NotI32
                 or OpCode.I32ToI8 or OpCode.I32ToU8 or OpCode.I32ToI16 or OpCode.I32ToU16 => (VmType.I32, 1, VmType.I32),
             OpCode.AddI64 or OpCode.SubI64 or OpCode.MulI64 or OpCode.DivI64 or OpCode.RemI64
+                or OpCode.DivUnI64 or OpCode.RemUnI64
                 or OpCode.AndI64 or OpCode.OrI64 or OpCode.XorI64 => (VmType.I64, 2, VmType.I64),
             OpCode.NegI64 or OpCode.NotI64 => (VmType.I64, 1, VmType.I64),
             OpCode.AddF32 or OpCode.SubF32 or OpCode.MulF32 or OpCode.DivF32 or OpCode.RemF32 => (VmType.F32, 2, VmType.F32),
@@ -377,6 +379,11 @@ public static class Verifier
             OpCode.F64ToI64 => (VmType.F64, 1, VmType.I64),
             OpCode.F32ToF64 => (VmType.F32, 1, VmType.F64),
             OpCode.F64ToF32 => (VmType.F64, 1, VmType.F32),
+            OpCode.U64ToF64 => (VmType.I64, 1, VmType.F64),
+            OpCode.F32ToU64 => (VmType.F32, 1, VmType.I64),
+            OpCode.F64ToU64 => (VmType.F64, 1, VmType.I64),
+            OpCode.F32ToU32 => (VmType.F32, 1, VmType.I32),
+            OpCode.F64ToU32 => (VmType.F64, 1, VmType.I32),
             _ => null,
         };
 

@@ -66,3 +66,56 @@ forwarded to the session.
 - Output: 48 kHz, stereo, 32-bit float, through an SDL3 audio stream callback on the audio thread.
 - The eight-channel hardware model is not implemented yet. The engine renders silence plus a host
   diagnostic sine tone.
+
+## VM-1 — executable format, verifier, interpreter
+
+- **Instruction set.** Typed stack machine (`ZTX16.VM.OpCode`): every opcode has fixed operand types, so
+  verification is one pass and the interpreter does no runtime type tests. Values are raw 64-bit slots.
+- **Executable format.** `ZTXE` magic + format version 1 (`ExecutableFormat`). Syscalls are imported by
+  name and signature and linked at load; unknown names fail to link.
+- **Verification.** Stack balance and types at every instruction and merge point, branch targets on
+  instruction boundaries, local/global/call/import ranges, no fall-through off the end.
+- **Traps.** Integer division by zero and `MinValue / -1`, exhausted instruction budget, call depth,
+  value-stack overflow, and any exception thrown by a syscall. A trap is an unhandled cartridge failure.
+- **Provisional limits** (implementation constants, not machine-profile guarantees): call depth 256,
+  64K value slots, 10M instructions per lifecycle call (`VmProgram.InstructionBudgetPerCall`).
+- **Float → int** conversions saturate and map NaN to 0 (the .NET 9+ behaviour), for every width,
+  including the unsigned opcodes `F32ToU32`, `F64ToU32`, `F32ToU64`, `F64ToU64`.
+
+## VM-2 — C# toolchain
+
+### Namespaces and assemblies
+
+- `ZTX16.*` names belong to the **cartridge API** (`src/ZTX16.Sdk`): `ZTX16.Graphics`, `ZTX16.Input`,
+  `ZTX16.Machine`, `ZTX16.Key`, ….
+- The runtime implementation lives in `ZTX16.Platform.*` (`GraphicsSystem`, `InputSystem`, …). Host code
+  never occupies cartridge API names.
+- `src/ZTX16.Abi` reads the ABI from the SDK (`SdkAbi`); runtime and toolchain both depend on it.
+- `src/ZTX16.Toolchain` builds `ztx16c`, the IL → ZTX16 translator. Cartridges reference it only for build order.
+- Input enums (`Key`, `MouseButton`, `GamepadButton`, `GamepadAxis`) moved into the SDK; the runtime uses the same types.
+
+### Provisional cartridge shape (until the VM has a heap)
+
+- Entry point: a static class marked `[Cartridge]` with `static void Initialize()`, `Tick()`, `Render()`
+  and optional `Deinitialize()`. It becomes the platform lifecycle interface once classes are supported.
+- SDK API is flat and static (`Graphics.FillRect(layer, …)`); object-style APIs follow with the heap.
+
+### Translation rules
+
+- Supported: static methods and static fields of numeric types, `bool`, `char` and enums; arithmetic,
+  bitwise ops, shifts, comparisons, all conversions between them, branches, `switch`, calls to cartridge
+  methods and SDK syscalls. Anything else is a build error naming the method and IL offset.
+- Static constructors of every type the cartridge touches run once, eagerly, in type-definition order,
+  before `Initialize`. (The CLR runs them lazily; cartridges must not rely on lazy ordering.)
+- Stores into `byte`/`sbyte`/`short`/`ushort`/`char` locations truncate, as the CLI specifies.
+- Conversions from floating point to sub-32-bit integers go through `int` first.
+- Generated code is always run through the VM verifier; a failure there is reported as an internal
+  toolchain error.
+- Correctness is checked by differential tests: the same C# methods run on .NET and in the VM, in both
+  Debug and Release compilation, and must produce identical results (`ToolchainSemanticsTests`).
+
+### Build integration
+
+A cartridge `.csproj` imports `src/ZTX16.Toolchain/build/ZTX16.Cartridge.targets`. After `Build` it runs
+`ztx16c` and writes `bin/<config>/net10.0/<AssemblyName>.ztxe`. See `samples/HelloSquare`. The proper
+Project → Cartridge build (resources, Project Config, packed cartridge) is the next milestone.

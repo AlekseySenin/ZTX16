@@ -229,6 +229,33 @@ public sealed class VmInstance
                 case OpCode.ShlI32: sp--; s[sp - 1] = I32(s[sp - 1]) << (I32(s[sp]) & 31); break;
                 case OpCode.ShrI32: sp--; s[sp - 1] = I32(s[sp - 1]) >> (I32(s[sp]) & 31); break;
                 case OpCode.ShrUnI32: sp--; s[sp - 1] = (int)((uint)I32(s[sp - 1]) >> (I32(s[sp]) & 31)); break;
+                case OpCode.DivUnI32:
+                case OpCode.RemUnI32:
+                    {
+                        sp--;
+                        uint a = (uint)I32(s[sp - 1]), b = (uint)I32(s[sp]);
+                        if (b == 0)
+                        {
+                            throw new VmTrapException("Integer division by zero", function.Name, start);
+                        }
+
+                        s[sp - 1] = (int)(op == OpCode.DivUnI32 ? a / b : a % b);
+                        break;
+                    }
+
+                case OpCode.DivUnI64:
+                case OpCode.RemUnI64:
+                    {
+                        sp--;
+                        ulong a = (ulong)s[sp - 1], b = (ulong)s[sp];
+                        if (b == 0)
+                        {
+                            throw new VmTrapException("Integer division by zero", function.Name, start);
+                        }
+
+                        s[sp - 1] = (long)(op == OpCode.DivUnI64 ? a / b : a % b);
+                        break;
+                    }
 
                 // i64
                 case OpCode.AddI64: sp--; s[sp - 1] = unchecked(s[sp - 1] + s[sp]); break;
@@ -330,6 +357,11 @@ public sealed class VmInstance
                 case OpCode.I32ToU8: s[sp - 1] = unchecked((byte)I32(s[sp - 1])); break;
                 case OpCode.I32ToI16: s[sp - 1] = unchecked((short)I32(s[sp - 1])); break;
                 case OpCode.I32ToU16: s[sp - 1] = unchecked((ushort)I32(s[sp - 1])); break;
+                case OpCode.U64ToF64: s[sp - 1] = EF64((ulong)s[sp - 1]); break;
+                case OpCode.F32ToU64: s[sp - 1] = unchecked((long)(ulong)F32(s[sp - 1])); break;
+                case OpCode.F64ToU64: s[sp - 1] = unchecked((long)(ulong)F64(s[sp - 1])); break;
+                case OpCode.F32ToU32: s[sp - 1] = unchecked((int)(uint)F32(s[sp - 1])); break;
+                case OpCode.F64ToU32: s[sp - 1] = unchecked((int)(uint)F64(s[sp - 1])); break;
 
                 // control flow
                 case OpCode.Branch:

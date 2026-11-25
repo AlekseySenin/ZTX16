@@ -7,29 +7,48 @@ Fantasy computer platform. The architecture and specifications are in [Documents
 - .NET 10 SDK
 - Windows or Linux (SDL3 native libraries come with the `ppy.SDL3-CS` package)
 
-## Build, test, run
+## Build and test
 
 ```
 dotnet build ZTX16.sln
 dotnet test ZTX16.sln
-dotnet run --project src/ZTX16.Host -- [--scale 1..8] [--fullscreen]
 ```
 
-The host currently runs the built-in diagnostic program:
+## Write and run a C# cartridge
 
-| Input | Action |
+Cartridges are ordinary C# compiled against `ZTX16.Sdk`, then translated by `ztx16c` into a ZTX16 executable (`.ztxe`) that runs in the ZTX16 VM. See [samples/HelloSquare](samples/HelloSquare/Game.cs).
+
+```
+dotnet build samples/HelloSquare
+dotnet run --project src/ZTX16.Host -- --exe samples/HelloSquare/bin/Debug/net10.0/HelloSquare.ztxe
+```
+
+HelloSquare: arrows / WASD / D-pad / left stick move the square, Space toggles the scrolling background, Escape exits.
+
+The current toolchain supports static methods and fields of numeric types, `bool`, `char` and enums. Classes, structs, arrays and strings arrive with the managed heap; until then the toolchain reports them as build errors.
+
+## Host options
+
+```
+dotnet run --project src/ZTX16.Host -- [--scale 1..8] [--fullscreen] [--exe <file.ztxe> | --vm-demo]
+```
+
+Without `--exe` the host runs its built-in diagnostic program; `--vm-demo` runs a hand-assembled bytecode demo.
+
+| Key | Action |
 |---|---|
-| Arrows / WASD / D-pad / left stick | move the square (its height sets the tone pitch) |
-| Space | toggle the test tone |
-| 1–8 | toggle Display Layer 1–8 |
-| Escape | exit |
 | F11 | toggle fullscreen (host) |
 | F10 | cycle window scale 1–4× (host) |
 
-Red marker = lower-left (0,0), blue marker = upper-right. The top indicator row shows Space, mouse L/M/R, four gamepad slots, the tone, and a ticks-per-second bar.
+Diagnostic program: arrows / WASD / D-pad / left stick move the square (its height sets the tone pitch), Space toggles the test tone, 1–8 toggle Display Layers, Escape exits. Red marker = lower-left (0,0), blue marker = upper-right.
 
 ## Layout
 
-- `src/ZTX16.Platform` — platform subsystems; no host dependencies.
+- `src/ZTX16.Sdk` — cartridge API (`ZTX16.*`); `[Syscall]` declarations are the platform ABI.
+- `src/ZTX16.VM` — executable format, verifier, interpreter.
+- `src/ZTX16.Abi` — reads the ABI from the SDK for runtime and toolchain.
+- `src/ZTX16.Platform` — runtime subsystems (`ZTX16.Platform.*`); no host dependencies.
+- `src/ZTX16.Toolchain` — `ztx16c`, IL → ZTX16 translator, and cartridge build targets.
 - `src/ZTX16.Host` — SDL3 reference host.
-- `tests/ZTX16.Tests` — platform unit tests.
+- `samples/` — example cartridges.
+- `tests/ZTX16.Tests` — unit, VM, toolchain and differential tests.

@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- Platform runtime: ZTX16 subsystems. Must not reference SDL3, OpenGL or any host technology. -->
   <PropertyGroup>
-    <RootNamespace>ZTX16</RootNamespace>
+    <RootNamespace>ZTX16.Platform</RootNamespace>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
   <ItemGroup>
@@ -10,5 +10,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\ZTX16.VM\ZTX16.VM.csproj" />
+    <ProjectReference Include="..\ZTX16.Sdk\ZTX16.Sdk.csproj" />
+    <ProjectReference Include="..\ZTX16.Abi\ZTX16.Abi.csproj" />
   </ItemGroup>
 </Project>

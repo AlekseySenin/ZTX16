@@ -1,7 +1,7 @@
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using SDL;
-using ZTX16.Audio;
+using ZTX16.Platform.Audio;
 using static SDL.SDL3;
 
 namespace ZTX16.Host;

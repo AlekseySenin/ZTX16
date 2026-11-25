@@ -1,0 +1,23 @@
+<Project>
+  <!-- Import into a cartridge .csproj: compiles against the ZTX16 SDK and, after Build,
+       translates the IL assembly into $(OutDir)$(AssemblyName).ztxe with ztx16c.
+       The IL assembly is an intermediate artifact only. -->
+  <PropertyGroup>
+    <ZTX16Root>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)', '..', '..', '..'))</ZTX16Root>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="$(ZTX16Root)src/ZTX16.Sdk/ZTX16.Sdk.csproj" />
+    <!-- Build-order dependency only: the toolchain must exist before translation runs. -->
+    <ProjectReference Include="$(ZTX16Root)src/ZTX16.Toolchain/ZTX16.Toolchain.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <Target Name="ZTX16Translate" AfterTargets="Build">
+    <!-- Computed here: OutDir is not yet defined when this file is imported. -->
+    <PropertyGroup>
+      <ZTX16ToolchainDll>$(ZTX16Root)src/ZTX16.Toolchain/bin/$(Configuration)/net10.0/ztx16c.dll</ZTX16ToolchainDll>
+      <ZTX16ExecutablePath>$(TargetDir)$(AssemblyName).ztxe</ZTX16ExecutablePath>
+    </PropertyGroup>
+    <Exec Command="dotnet &quot;$(ZTX16ToolchainDll)&quot; &quot;@(IntermediateAssembly->'%(FullPath)')&quot; -o &quot;$(ZTX16ExecutablePath)&quot;" />
+  </Target>
+</Project>

@@ -1,4 +1,4 @@
-namespace ZTX16.Graphics;
+namespace ZTX16.Platform.Graphics;
 
 /// <summary>
 /// The 32-entry runtime palette. ColorIndex 0 is transparent inside Graphics Layers;

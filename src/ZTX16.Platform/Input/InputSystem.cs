@@ -1,4 +1,4 @@
-namespace ZTX16.Input;
+namespace ZTX16.Platform.Input;
 
 /// <summary>
 /// The ZTX16 input hardware model: devices, not players. Game code decides how

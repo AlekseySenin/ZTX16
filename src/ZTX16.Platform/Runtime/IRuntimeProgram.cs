@@ -1,4 +1,4 @@
-namespace ZTX16.Runtime;
+namespace ZTX16.Platform.Runtime;
 
 /// <summary>
 /// Host-side bridge to the code a session executes, following the cartridge lifecycle

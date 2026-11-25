@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using SDL;
-using ZTX16.Graphics;
-using ZTX16.Runtime;
+using ZTX16.Platform.Graphics;
+using ZTX16.Platform.Runtime;
 using static SDL.SDL3;
 
 namespace ZTX16.Host;

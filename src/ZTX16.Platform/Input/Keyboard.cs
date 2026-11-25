@@ -1,4 +1,4 @@
-namespace ZTX16.Input;
+namespace ZTX16.Platform.Input;
 
 /// <summary>Physical keyboard gameplay input. Text input is a separate system.</summary>
 public sealed class Keyboard

@@ -1,6 +1,6 @@
 using SDL;
-using ZTX16.Graphics;
-using ZTX16.Input;
+using ZTX16.Platform.Graphics;
+using ZTX16.Platform.Input;
 using static SDL.SDL3;
 
 namespace ZTX16.Host;

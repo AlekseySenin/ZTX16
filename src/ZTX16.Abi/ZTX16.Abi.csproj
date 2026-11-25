@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Reads the platform ABI from the SDK's [Syscall] declarations. Shared by runtime and toolchain. -->
+  <PropertyGroup>
+    <RootNamespace>ZTX16.Abi</RootNamespace>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ZTX16.Sdk\ZTX16.Sdk.csproj" />
+    <ProjectReference Include="..\ZTX16.VM\ZTX16.VM.csproj" />
+  </ItemGroup>
+</Project>

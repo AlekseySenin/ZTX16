@@ -1,4 +1,4 @@
-namespace ZTX16.Input;
+namespace ZTX16;
 
 /// <summary>
 /// Physical keyboard keys, named by their position on a US-QWERTY layout.

@@ -67,6 +67,10 @@ public enum OpCode : byte
     ShrI32 = 0x2B,
     /// <summary>i32 logical shift right (count masked to 5 bits).</summary>
     ShrUnI32 = 0x2C,
+    /// <summary>i32 unsigned divide; traps on division by zero.</summary>
+    DivUnI32 = 0x2D,
+    /// <summary>i32 unsigned remainder; traps on division by zero.</summary>
+    RemUnI32 = 0x2E,
 
     // i64 arithmetic and bitwise
     /// <summary>i64 add (wrapping).</summary>
@@ -95,6 +99,10 @@ public enum OpCode : byte
     ShrI64 = 0x3B,
     /// <summary>i64 logical shift right; the count is an i32 masked to 6 bits.</summary>
     ShrUnI64 = 0x3C,
+    /// <summary>i64 unsigned divide; traps on division by zero.</summary>
+    DivUnI64 = 0x3D,
+    /// <summary>i64 unsigned remainder; traps on division by zero.</summary>
+    RemUnI64 = 0x3E,
 
     // f32 arithmetic
     /// <summary>f32 add.</summary>
@@ -201,6 +209,16 @@ public enum OpCode : byte
     I32ToI16 = 0x7F,
     /// <summary>i32 → u16 zero-extended back to i32 (C# ushort/char cast).</summary>
     I32ToU16 = 0x80,
+    /// <summary>i64 interpreted as unsigned → f64.</summary>
+    U64ToF64 = 0x81,
+    /// <summary>f32 → u64 (truncate toward zero, saturating; negatives and NaN → 0).</summary>
+    F32ToU64 = 0x82,
+    /// <summary>f64 → u64 (truncate toward zero, saturating; negatives and NaN → 0).</summary>
+    F64ToU64 = 0x83,
+    /// <summary>f32 → u32 (truncate toward zero, saturating; negatives and NaN → 0).</summary>
+    F32ToU32 = 0x84,
+    /// <summary>f64 → u32 (truncate toward zero, saturating; negatives and NaN → 0).</summary>
+    F64ToU32 = 0x85,
 
     // Control flow
     /// <summary>Unconditional branch. Operand: i32 target offset.</summary>

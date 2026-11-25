@@ -1,4 +1,4 @@
-using ZTX16.Graphics;
+using ZTX16.Platform.Graphics;
 
 namespace ZTX16.Tests;
 

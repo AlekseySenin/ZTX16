@@ -1,8 +1,8 @@
 using System.Globalization;
-using ZTX16.Execution;
+using ZTX16.Platform.Execution;
 using ZTX16.Host;
 using ZTX16.Host.Diagnostics;
-using ZTX16.Runtime;
+using ZTX16.Platform.Runtime;
 using ZTX16.VM;
 
 HostOptions options;

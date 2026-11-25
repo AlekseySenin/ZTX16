@@ -1,4 +1,4 @@
-namespace ZTX16.Graphics;
+namespace ZTX16.Platform.Graphics;
 
 /// <summary>
 /// A physical Graphics Layer: a persistent raster buffer of ColorIndex values.
