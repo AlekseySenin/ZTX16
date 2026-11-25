@@ -42,7 +42,7 @@ Cartridge is the packed/distribution representation of a Project.
 
 It contains the project's compiled executable representation plus all required packaged assets/resources and required metadata in one self-contained file.
 
-The exact binary layout and executable representation are implementation details.
+The Cartridge contains a platform-defined ZTX16 executable representation. The exact binary layout, VM instruction encoding and executable metadata are implementation details.
 
 The Cartridge must be sufficient for runtime loading without requiring the original Project directory.
 
@@ -58,7 +58,7 @@ The build process:
 2. discovers mapped source/resources;
 3. ignores unrelated/unmapped files;
 4. validates required content;
-5. compiles/builds code into the runtime representation;
+5. compiles/builds code into the ZTX16 executable representation;
 6. packages required resources and metadata;
 7. produces a self-contained Cartridge.
 

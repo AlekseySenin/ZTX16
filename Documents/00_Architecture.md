@@ -6,7 +6,7 @@ ZTX16 is a fantasy computer/platform, not a general-purpose game engine.
 
 The platform defines a constrained but coherent set of hardware-like capabilities and foundational APIs. Higher-level systems and libraries may build game-engine functionality on top of them.
 
-The official editors are applications running inside ZTX16, not privileged architectural components.
+The official editors are applications running inside ZTX16, while authoring tools have additional host-side import/export responsibilities. They are not part of the Cartridge runtime contract.
 
 ## 2. Core separation
 
@@ -116,6 +116,10 @@ High-level game-space resource consisting of logical visual layers and actors. L
 ### Machine
 
 Small platform-facing API for time, capabilities/profile, exit and suspend.
+
+### Host
+
+The MVP host targets Windows/Linux and uses SDL3 for host integration, with OpenGL as the initial graphics presentation backend. Host APIs remain behind ZTX16 runtime boundaries.
 
 ### Storage
 
