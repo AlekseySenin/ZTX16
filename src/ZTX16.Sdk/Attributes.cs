@@ -22,16 +22,25 @@ public sealed class SyscallAttribute : Attribute
 }
 
 /// <summary>
-/// Marks the cartridge entry class. It must be static and declare static
-/// <c>Initialize()</c>, <c>Tick()</c> and <c>Render()</c>, and may declare <c>Deinitialize()</c>.
+/// The cartridge lifecycle contract. A cartridge has exactly one non-abstract class that
+/// implements this interface and has a public parameterless constructor; the runtime creates
+/// it once and drives it from the fixed 60 Hz loop.
 /// </summary>
-/// <remarks>
-/// Provisional form while the VM has no heap: once classes are supported, the entry point
-/// becomes the platform-defined lifecycle interface.
-/// </remarks>
-[AttributeUsage(AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
-public sealed class CartridgeAttribute : Attribute
+public interface ICartridge
 {
+    /// <summary>Called once before the first tick.</summary>
+    void Initialize();
+
+    /// <summary>Game Logic phase: called once per tick, after Input.</summary>
+    void Tick();
+
+    /// <summary>Render phase: called once per tick, after Audio Update.</summary>
+    void Render();
+
+    /// <summary>Controlled shutdown. Optional; not called after an unhandled failure.</summary>
+    void Deinitialize()
+    {
+    }
 }
 
 /// <summary>Thrown if SDK code is executed on .NET instead of the ZTX16 VM.</summary>

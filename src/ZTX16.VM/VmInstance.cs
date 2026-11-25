@@ -48,6 +48,12 @@ public sealed class VmInstance
     private readonly VmImport[] _imports;
     private readonly long[] _globals;
     private readonly long[] _stack = new long[StackSlots];
+    private readonly VmHeap _heap;
+    private readonly long[] _stringHandles;
+    private readonly HashSet<int>[] _assignableTo;
+    private readonly int[] _frameFunction = new int[MaxCallDepth + 2];
+    private readonly int[] _frameBase = new int[MaxCallDepth + 2];
+    private readonly int[] _framePc = new int[MaxCallDepth + 2];
     private long _budget = long.MaxValue;
     private int _depth;
 
@@ -63,10 +69,35 @@ public sealed class VmInstance
         _imports = module.Module.Imports.ToArray();
         _syscalls = _imports.Select(syscalls.Resolve).ToArray();
         _globals = new long[module.Module.Globals.Count];
+        _heap = new VmHeap(module.Module);
+
+        // String literals are allocated once and stay alive for the instance's lifetime.
+        _stringHandles = module.Module.Strings.Select(s => _heap.Add(new StringObject(s))).ToArray();
+        _assignableTo = BuildAssignability(module.Module);
     }
 
     /// <summary>The module being executed.</summary>
     public VmModule Module => _verified.Module;
+
+    /// <summary>Number of live heap objects (including string literals).</summary>
+    public int HeapObjectCount => _heap.ObjectCount;
+
+    /// <summary>Approximate bytes held by heap objects.</summary>
+    public long HeapBytes => _heap.LiveBytes;
+
+    /// <summary>Number of garbage collections performed.</summary>
+    public int GarbageCollections => _heap.Collections;
+
+    /// <summary>Runs a full collection. Only valid between invocations.</summary>
+    public void CollectGarbage()
+    {
+        if (_depth != 0)
+        {
+            throw new InvalidOperationException("Cannot collect explicitly while code is running.");
+        }
+
+        Collect();
+    }
 
     /// <summary>Instructions executed by the most recent <see cref="Invoke"/> call.</summary>
     public long LastInstructionCount { get; private set; }
@@ -120,6 +151,10 @@ public sealed class VmInstance
         {
             throw new VmTrapException("Call stack overflow", function.Name, 0);
         }
+
+        int frame = _depth;
+        _frameFunction[frame] = functionIndex;
+        _frameBase[frame] = frameBase;
 
         if (sp + _verified.MaxStack[functionIndex] > _stack.Length)
         {
@@ -376,6 +411,7 @@ public sealed class VmInstance
 
                 case OpCode.Call:
                     {
+                        _framePc[frame] = start;
                         int callee = ReadU16(code, ref pc);
                         VmSignature signature = _functions[callee].Signature;
                         int calleeBase = sp - signature.Parameters.Count;
@@ -384,8 +420,170 @@ public sealed class VmInstance
                         break;
                     }
 
+                case OpCode.CallVirtual:
+                    {
+                        _framePc[frame] = start;
+                        int selector = ReadU16(code, ref pc);
+                        VmSignature signature = Module.Selectors[selector].Signature;
+                        int calleeBase = sp - signature.Parameters.Count;
+                        InstanceObject receiver = Instance(s[calleeBase], function, start);
+                        if (!Module.Classes[receiver.Class].Methods.TryGetValue(selector, out int callee))
+                        {
+                            throw new VmTrapException(
+                                $"Class '{Module.Classes[receiver.Class].Name}' has no implementation of '{Module.Selectors[selector].Name}'",
+                                function.Name,
+                                start);
+                        }
+
+                        Execute(callee, calleeBase);
+                        sp = calleeBase + (signature.Result is null ? 0 : 1);
+                        break;
+                    }
+
+                case OpCode.New:
+                    {
+                        _framePc[frame] = start;
+                        int classIndex = ReadU16(code, ref pc);
+                        int constructor = ReadU16(code, ref pc);
+                        int argCount = _functions[constructor].Signature.Parameters.Count - 1;
+                        long handle = Allocate(new InstanceObject(classIndex, Module.Classes[classIndex].Fields.Count), function, start);
+
+                        // Insert the new object below the constructor arguments as 'this'.
+                        int calleeBase = sp - argCount;
+                        Array.Copy(s, calleeBase, s, calleeBase + 1, argCount);
+                        s[calleeBase] = handle;
+                        Execute(constructor, calleeBase);
+                        s[calleeBase] = handle;
+                        sp = calleeBase + 1;
+                        break;
+                    }
+
+                case OpCode.ConstNull:
+                    s[sp++] = 0;
+                    break;
+
+                case OpCode.EqRef:
+                    sp--;
+                    s[sp - 1] = B(s[sp - 1] == s[sp]);
+                    break;
+
+                case OpCode.LoadField:
+                    {
+                        int field = ReadU16(code, ref pc);
+                        s[sp - 1] = FieldOwner(s[sp - 1], field, function, start).Fields[Module.Fields[field].Slot];
+                        break;
+                    }
+
+                case OpCode.StoreField:
+                    {
+                        int field = ReadU16(code, ref pc);
+                        sp -= 2;
+                        FieldOwner(s[sp], field, function, start).Fields[Module.Fields[field].Slot] = s[sp + 1];
+                        break;
+                    }
+
+                case OpCode.IsInstance:
+                    {
+                        int target = ReadU16(code, ref pc);
+                        if (s[sp - 1] != 0 && !IsInstanceOf(s[sp - 1], target))
+                        {
+                            s[sp - 1] = 0;
+                        }
+
+                        break;
+                    }
+
+                case OpCode.CastClass:
+                    {
+                        int target = ReadU16(code, ref pc);
+                        if (s[sp - 1] != 0 && !IsInstanceOf(s[sp - 1], target))
+                        {
+                            throw new VmTrapException($"Invalid cast to '{Module.Classes[target].Name}'", function.Name, start);
+                        }
+
+                        break;
+                    }
+
+                case OpCode.NewArray:
+                    {
+                        _framePc[frame] = start;
+                        var kind = (VmArrayKind)ReadU16(code, ref pc);
+                        int length = I32(s[sp - 1]);
+                        if (length < 0)
+                        {
+                            throw new VmTrapException($"Negative array length {length}", function.Name, start);
+                        }
+
+                        s[sp - 1] = Allocate(new ArrayObject(kind, length), function, start);
+                        break;
+                    }
+
+                case OpCode.LoadElement:
+                    {
+                        var access = (VmElementAccess)ReadU16(code, ref pc);
+                        sp--;
+                        s[sp - 1] = LoadElement(ArrayOf(s[sp - 1], access, function, start), I32(s[sp]), access, function, start);
+                        break;
+                    }
+
+                case OpCode.StoreElement:
+                    {
+                        var access = (VmElementAccess)ReadU16(code, ref pc);
+                        sp -= 3;
+                        StoreElement(ArrayOf(s[sp], access, function, start), I32(s[sp + 1]), s[sp + 2], access, function, start);
+                        break;
+                    }
+
+                case OpCode.ArrayLength:
+                    s[sp - 1] = Deref(s[sp - 1], function, start) is ArrayObject array
+                        ? array.Length
+                        : throw new VmTrapException("Not an array", function.Name, start);
+                    break;
+
+                case OpCode.LoadString:
+                    s[sp++] = _stringHandles[ReadU16(code, ref pc)];
+                    break;
+
+                case OpCode.StringLength:
+                    s[sp - 1] = StringOf(s[sp - 1], function, start).Length;
+                    break;
+
+                case OpCode.StringCharAt:
+                    {
+                        sp--;
+                        string value = StringOf(s[sp - 1], function, start);
+                        int index = I32(s[sp]);
+                        if ((uint)index >= (uint)value.Length)
+                        {
+                            throw new VmTrapException($"String index {index} out of range (length {value.Length})", function.Name, start);
+                        }
+
+                        s[sp - 1] = value[index];
+                        break;
+                    }
+
+                case OpCode.StringConcat:
+                    {
+                        _framePc[frame] = start;
+                        string left = s[sp - 2] == 0 ? string.Empty : StringOf(s[sp - 2], function, start);
+                        string right = s[sp - 1] == 0 ? string.Empty : StringOf(s[sp - 1], function, start);
+                        long handle = Allocate(new StringObject(left + right), function, start);
+                        sp--;
+                        s[sp - 1] = handle;
+                        break;
+                    }
+
+                case OpCode.StringEquals:
+                    {
+                        sp--;
+                        long a = s[sp - 1], b = s[sp];
+                        s[sp - 1] = B(a == b || (a != 0 && b != 0 && StringOf(a, function, start) == StringOf(b, function, start)));
+                        break;
+                    }
+
                 case OpCode.Syscall:
                     {
+                        _framePc[frame] = start;
                         int index = ReadU16(code, ref pc);
                         VmImport import = _imports[index];
                         int argCount = import.Signature.Parameters.Count;
@@ -423,6 +621,175 @@ public sealed class VmInstance
                     throw new VmTrapException($"Invalid opcode 0x{(byte)op:X2}", function.Name, start);
             }
         }
+    }
+
+    // ---- heap ---------------------------------------------------------------------------
+
+    private long Allocate(HeapObject obj, VmFunction function, int offset)
+    {
+        if (_heap.ShouldCollectBefore(obj.Size))
+        {
+            Collect();
+            if (!_heap.Fits(obj.Size))
+            {
+                throw new VmTrapException($"Out of memory (heap limit {VmHeap.LimitBytes / (1024 * 1024)} MB)", function.Name, offset);
+            }
+        }
+
+        return _heap.Add(obj);
+    }
+
+    /// <summary>
+    /// Marks every root precisely: string literals, reference globals, and in each active frame
+    /// the reference-typed locals plus the reference entries of the verifier's stack map.
+    /// </summary>
+    private void Collect()
+    {
+        foreach (long handle in _stringHandles)
+        {
+            _heap.MarkRoot(handle);
+        }
+
+        for (int g = 0; g < _globals.Length; g++)
+        {
+            if (Module.Globals[g] == VmType.Ref)
+            {
+                _heap.MarkRoot(_globals[g]);
+            }
+        }
+
+        for (int frame = 1; frame <= _depth; frame++)
+        {
+            VmFunction function = _functions[_frameFunction[frame]];
+            int frameBase = _frameBase[frame];
+            for (int i = 0; i < function.LocalCount; i++)
+            {
+                if (function.LocalType(i) == VmType.Ref)
+                {
+                    _heap.MarkRoot(_stack[frameBase + i]);
+                }
+            }
+
+            int pc = _framePc[frame];
+            VmType[] map = _verified.StackMaps[_frameFunction[frame]][pc];
+
+            // In a calling frame, the top operands became the callee's parameters and are
+            // scanned as the callee's locals.
+            int count = map.Length - (frame < _depth ? CalleeOwnedOperands(function, pc) : 0);
+            int operandBase = frameBase + function.LocalCount;
+            for (int i = 0; i < count; i++)
+            {
+                if (map[i] == VmType.Ref)
+                {
+                    _heap.MarkRoot(_stack[operandBase + i]);
+                }
+            }
+        }
+
+        _heap.TraceAndSweep();
+    }
+
+    private int CalleeOwnedOperands(VmFunction function, int pc)
+    {
+        var op = (OpCode)function.Code[pc];
+        int operand = BinaryPrimitives.ReadUInt16LittleEndian(function.Code.AsSpan(pc + 1));
+        return op switch
+        {
+            OpCode.Call => _functions[operand].Signature.Parameters.Count,
+            OpCode.CallVirtual => Module.Selectors[operand].Signature.Parameters.Count,
+            OpCode.New => _functions[BinaryPrimitives.ReadUInt16LittleEndian(function.Code.AsSpan(pc + 3))].Signature.Parameters.Count - 1,
+            _ => 0,
+        };
+    }
+
+    private HeapObject Deref(long handle, VmFunction function, int offset) =>
+        handle != 0 ? _heap.Get(handle) : throw new VmTrapException("Null reference", function.Name, offset);
+
+    private InstanceObject Instance(long handle, VmFunction function, int offset) =>
+        Deref(handle, function, offset) as InstanceObject ?? throw new VmTrapException("Not an object instance", function.Name, offset);
+
+    private InstanceObject FieldOwner(long handle, int field, VmFunction function, int offset)
+    {
+        InstanceObject obj = Instance(handle, function, offset);
+        int owner = Module.Fields[field].Class;
+        return _assignableTo[obj.Class].Contains(owner)
+            ? obj
+            : throw new VmTrapException($"Field of '{Module.Classes[owner].Name}' accessed on '{Module.Classes[obj.Class].Name}'", function.Name, offset);
+    }
+
+    private string StringOf(long handle, VmFunction function, int offset) =>
+        Deref(handle, function, offset) is StringObject s ? s.Value : throw new VmTrapException("Not a string", function.Name, offset);
+
+    private ArrayObject ArrayOf(long handle, VmElementAccess access, VmFunction function, int offset)
+    {
+        if (Deref(handle, function, offset) is not ArrayObject array)
+        {
+            throw new VmTrapException("Not an array", function.Name, offset);
+        }
+
+        return array.Kind == VmTypes.StorageOf(access)
+            ? array
+            : throw new VmTrapException($"Array element access {access} does not match array storage {array.Kind}", function.Name, offset);
+    }
+
+    private static long LoadElement(ArrayObject array, int index, VmElementAccess access, VmFunction function, int offset)
+    {
+        CheckIndex(array, index, function, offset);
+        return access switch
+        {
+            VmElementAccess.I8 => (sbyte)((byte[])array.Data)[index],
+            VmElementAccess.U8 => ((byte[])array.Data)[index],
+            VmElementAccess.I16 => (short)((ushort[])array.Data)[index],
+            VmElementAccess.U16 => ((ushort[])array.Data)[index],
+            VmElementAccess.I32 => ((int[])array.Data)[index],
+            VmElementAccess.F32 => EF32(((float[])array.Data)[index]),
+            VmElementAccess.F64 => EF64(((double[])array.Data)[index]),
+            _ => ((long[])array.Data)[index],
+        };
+    }
+
+    private static void StoreElement(ArrayObject array, int index, long value, VmElementAccess access, VmFunction function, int offset)
+    {
+        CheckIndex(array, index, function, offset);
+        switch (access)
+        {
+            case VmElementAccess.I8 or VmElementAccess.U8: ((byte[])array.Data)[index] = unchecked((byte)value); break;
+            case VmElementAccess.I16 or VmElementAccess.U16: ((ushort[])array.Data)[index] = unchecked((ushort)value); break;
+            case VmElementAccess.I32: ((int[])array.Data)[index] = unchecked((int)value); break;
+            case VmElementAccess.F32: ((float[])array.Data)[index] = F32(value); break;
+            case VmElementAccess.F64: ((double[])array.Data)[index] = F64(value); break;
+            default: ((long[])array.Data)[index] = value; break;
+        }
+    }
+
+    private static void CheckIndex(ArrayObject array, int index, VmFunction function, int offset)
+    {
+        if ((uint)index >= (uint)array.Length)
+        {
+            throw new VmTrapException($"Array index {index} out of range (length {array.Length})", function.Name, offset);
+        }
+    }
+
+    private bool IsInstanceOf(long handle, int classIndex) =>
+        _heap.Get(handle) is InstanceObject obj && _assignableTo[obj.Class].Contains(classIndex);
+
+    private static HashSet<int>[] BuildAssignability(VmModule module)
+    {
+        var result = new HashSet<int>[module.Classes.Count];
+        for (int i = 0; i < module.Classes.Count; i++)
+        {
+            var set = new HashSet<int> { i };
+            VmClass c = module.Classes[i];
+            if (c.BaseClass != VmClass.NoBase)
+            {
+                set.UnionWith(result[c.BaseClass]); // bases precede derived classes
+            }
+
+            set.UnionWith(c.Interfaces);
+            result[i] = set;
+        }
+
+        return result;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

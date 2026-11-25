@@ -32,7 +32,8 @@ internal sealed class MethodTranslator
         _method = method;
         _function = function;
         _name = function.Name;
-        _args = signature.ParameterTypes.Select((t, i) => ClrTypeMapping.MapValue(t, $"{_name} parameter {i}")).ToArray();
+        IEnumerable<VmTypeInfo> args = signature.ParameterTypes.Select((t, i) => ClrTypeMapping.MapValue(t, $"{_name} parameter {i}"));
+        _args = (method.IsStatic() ? args : args.Prepend(new VmTypeInfo(VmType.Ref, null))).ToArray(); // IL arg 0 is 'this'
         _returnType = signature.ReturnType;
     }
 
@@ -189,7 +190,24 @@ internal sealed class MethodTranslator
             case ILOpCode.Ceq or ILOpCode.Cgt or ILOpCode.Cgt_un or ILOpCode.Clt or ILOpCode.Clt_un:
                 {
                     VmType type = PopPair();
-                    _function.Emit(CompareOp(op, type));
+                    if (type == VmType.Ref)
+                    {
+                        // ceq: identity; cgt.un: C#'s "x != null" idiom.
+                        _function.Emit(OpCode.EqRef);
+                        if (op == ILOpCode.Cgt_un)
+                        {
+                            _function.ConstI32(0).Emit(OpCode.EqI32);
+                        }
+                        else if (op != ILOpCode.Ceq)
+                        {
+                            throw Error($"comparison '{op}' is not defined for references");
+                        }
+                    }
+                    else
+                    {
+                        _function.Emit(CompareOp(op, type));
+                    }
+
                     Push(VmType.I32);
                     return;
                 }
@@ -216,6 +234,12 @@ internal sealed class MethodTranslator
                         _function.ConstI64(0).Emit(OpCode.EqI64);
                         ifTrue = !ifTrue;
                     }
+                    else if (condition == VmType.Ref)
+                    {
+                        // "x != null": compare with null and invert the branch.
+                        _function.Emit(OpCode.ConstNull).Emit(OpCode.EqRef);
+                        ifTrue = !ifTrue;
+                    }
                     else if (condition != VmType.I32)
                     {
                         throw Error($"branch condition must be an integer, found {VmTypes.Name(condition)}");
@@ -238,7 +262,103 @@ internal sealed class MethodTranslator
                 return;
 
             case ILOpCode.Call:
-                Call(MetadataTokens.EntityHandle((int)ins.Operand));
+            case ILOpCode.Callvirt:
+                Call(MetadataTokens.EntityHandle((int)ins.Operand), virtualCall: op == ILOpCode.Callvirt);
+                return;
+
+            case ILOpCode.Newobj:
+                {
+                    (VmSignature ctor, Action<FunctionBuilder> emit) = _context.ResolveNew(MetadataTokens.EntityHandle((int)ins.Operand), Where);
+                    for (int i = ctor.Parameters.Count - 1; i >= 1; i--)
+                    {
+                        Pop(ctor.Parameters[i], $"constructor argument {i - 1}");
+                    }
+
+                    emit(_function);
+                    Push(VmType.Ref);
+                    return;
+                }
+
+            case ILOpCode.Ldnull:
+                _function.Emit(OpCode.ConstNull);
+                Push(VmType.Ref);
+                return;
+
+            case ILOpCode.Ldfld:
+                {
+                    (int index, VmTypeInfo type) = _context.GetInstanceField(MetadataTokens.EntityHandle((int)ins.Operand), Where);
+                    Pop(VmType.Ref, "field owner");
+                    _function.Emit(OpCode.LoadField, index);
+                    Push(type.Type!.Value);
+                    return;
+                }
+
+            case ILOpCode.Stfld:
+                {
+                    (int index, VmTypeInfo type) = _context.GetInstanceField(MetadataTokens.EntityHandle((int)ins.Operand), Where);
+                    Pop(type.Type!.Value, "field value");
+                    Pop(VmType.Ref, "field owner");
+                    EmitNarrow(type);
+                    _function.Emit(OpCode.StoreField, index);
+                    return;
+                }
+
+            case ILOpCode.Castclass:
+            case ILOpCode.Isinst:
+                {
+                    Pop(VmType.Ref, "cast operand");
+                    if (_context.ClassForTypeTest(MetadataTokens.EntityHandle((int)ins.Operand), Where) is { } target)
+                    {
+                        _function.Emit(op == ILOpCode.Castclass ? OpCode.CastClass : OpCode.IsInstance, target.Builder.Index);
+                    }
+
+                    Push(VmType.Ref);
+                    return;
+                }
+
+            case ILOpCode.Newarr:
+                {
+                    ClrType element = _context.ResolveTypeToken(MetadataTokens.EntityHandle((int)ins.Operand));
+                    VmElementAccess access = ClrTypeMapping.ElementAccess(element, Where);
+                    Pop(VmType.I32, "array length");
+                    _function.Emit(OpCode.NewArray, (int)VmTypes.StorageOf(access));
+                    Push(VmType.Ref);
+                    return;
+                }
+
+            case ILOpCode.Ldlen:
+                Pop(VmType.Ref, "array");
+                _function.Emit(OpCode.ArrayLength);
+                Push(VmType.I32);
+                return;
+
+            case ILOpCode.Ldelem_i1: LoadElement(VmElementAccess.I8); return;
+            case ILOpCode.Ldelem_u1: LoadElement(VmElementAccess.U8); return;
+            case ILOpCode.Ldelem_i2: LoadElement(VmElementAccess.I16); return;
+            case ILOpCode.Ldelem_u2: LoadElement(VmElementAccess.U16); return;
+            case ILOpCode.Ldelem_i4 or ILOpCode.Ldelem_u4: LoadElement(VmElementAccess.I32); return;
+            case ILOpCode.Ldelem_i8: LoadElement(VmElementAccess.I64); return;
+            case ILOpCode.Ldelem_r4: LoadElement(VmElementAccess.F32); return;
+            case ILOpCode.Ldelem_r8: LoadElement(VmElementAccess.F64); return;
+            case ILOpCode.Ldelem_ref: LoadElement(VmElementAccess.Ref); return;
+            case ILOpCode.Ldelem:
+                LoadElement(ClrTypeMapping.ElementAccess(_context.ResolveTypeToken(MetadataTokens.EntityHandle((int)ins.Operand)), Where));
+                return;
+
+            case ILOpCode.Stelem_i1: StoreElement(VmElementAccess.I8); return;
+            case ILOpCode.Stelem_i2: StoreElement(VmElementAccess.I16); return;
+            case ILOpCode.Stelem_i4: StoreElement(VmElementAccess.I32); return;
+            case ILOpCode.Stelem_i8: StoreElement(VmElementAccess.I64); return;
+            case ILOpCode.Stelem_r4: StoreElement(VmElementAccess.F32); return;
+            case ILOpCode.Stelem_r8: StoreElement(VmElementAccess.F64); return;
+            case ILOpCode.Stelem_ref: StoreElement(VmElementAccess.Ref); return;
+            case ILOpCode.Stelem:
+                StoreElement(ClrTypeMapping.ElementAccess(_context.ResolveTypeToken(MetadataTokens.EntityHandle((int)ins.Operand)), Where));
+                return;
+
+            case ILOpCode.Ldstr:
+                _function.Emit(OpCode.LoadString, _context.AddString(_context.UserString((int)ins.Operand)));
+                Push(VmType.Ref);
                 return;
 
             case ILOpCode.Ldsfld:
@@ -265,10 +385,11 @@ internal sealed class MethodTranslator
 
     private static string UnsupportedHint(ILOpCode op) => op switch
     {
-        ILOpCode.Ldstr => " (strings arrive with the managed heap)",
-        ILOpCode.Newobj or ILOpCode.Newarr or ILOpCode.Box => " (objects and arrays arrive with the managed heap)",
-        ILOpCode.Ldfld or ILOpCode.Stfld or ILOpCode.Ldflda or ILOpCode.Callvirt => " (instance members arrive with the managed heap)",
-        ILOpCode.Ldloca or ILOpCode.Ldloca_s or ILOpCode.Ldarga or ILOpCode.Ldarga_s or ILOpCode.Ldsflda => " (addresses and ref parameters are not supported)",
+        ILOpCode.Box or ILOpCode.Unbox or ILOpCode.Unbox_any => " (boxing is not supported; avoid passing value types as object)",
+        ILOpCode.Ldftn or ILOpCode.Ldvirtftn => " (delegates and lambdas are not supported yet)",
+        ILOpCode.Initobj or ILOpCode.Ldobj or ILOpCode.Stobj => " (structs are not supported yet)",
+        ILOpCode.Ldelema => " (element addresses and ref locals are not supported)",
+        ILOpCode.Ldflda or ILOpCode.Ldloca or ILOpCode.Ldloca_s or ILOpCode.Ldarga or ILOpCode.Ldarga_s or ILOpCode.Ldsflda => " (addresses and ref parameters are not supported)",
         ILOpCode.Throw => " (exceptions are not supported yet)",
         >= ILOpCode.Conv_ovf_i1_un and <= ILOpCode.Conv_ovf_u_un or >= ILOpCode.Conv_ovf_i1 and <= ILOpCode.Conv_ovf_u8
             or ILOpCode.Add_ovf or ILOpCode.Add_ovf_un or ILOpCode.Sub_ovf or ILOpCode.Sub_ovf_un
@@ -575,6 +696,18 @@ internal sealed class MethodTranslator
             _ => throw Error($"unexpected branch '{op}'"),
         };
 
+        if (type == VmType.Ref)
+        {
+            if (compare != ILOpCode.Ceq)
+            {
+                throw Error($"ordered comparison '{op}' of references is not supported");
+            }
+
+            _function.Emit(OpCode.EqRef);
+            BranchTo(target, branchIfTrue ? OpCode.BranchIfTrue : OpCode.BranchIfFalse);
+            return;
+        }
+
         _function.Emit(CompareOp(compare, type));
         BranchTo(target, branchIfTrue ? OpCode.BranchIfTrue : OpCode.BranchIfFalse);
     }
@@ -644,9 +777,9 @@ internal sealed class MethodTranslator
 
     // ---- calls --------------------------------------------------------------------------
 
-    private void Call(EntityHandle target)
+    private void Call(EntityHandle target, bool virtualCall)
     {
-        (VmSignature signature, Action<FunctionBuilder> emit) = _context.ResolveCallFor(target, Where);
+        (VmSignature signature, Action<FunctionBuilder> emit) = _context.ResolveCall(target, virtualCall, Where);
         for (int i = signature.Parameters.Count - 1; i >= 0; i--)
         {
             Pop(signature.Parameters[i], $"argument {i}");
@@ -657,6 +790,24 @@ internal sealed class MethodTranslator
         {
             Push(result);
         }
+    }
+
+    // ---- arrays -------------------------------------------------------------------------
+
+    private void LoadElement(VmElementAccess access)
+    {
+        Pop(VmType.I32, "array index");
+        Pop(VmType.Ref, "array");
+        _function.Emit(OpCode.LoadElement, (int)access);
+        Push(VmTypes.OfAccess(access));
+    }
+
+    private void StoreElement(VmElementAccess access)
+    {
+        Pop(VmTypes.OfAccess(access), "array element");
+        Pop(VmType.I32, "array index");
+        Pop(VmType.Ref, "array");
+        _function.Emit(OpCode.StoreElement, (int)access);
     }
 
     // ---- type stack ---------------------------------------------------------------------

@@ -233,6 +233,49 @@ public enum OpCode : byte
     Syscall = 0x99,
     /// <summary>Return from the function; the result, if any, is on the stack.</summary>
     Return = 0x9A,
+
+    // References and objects
+    /// <summary>Push a null reference.</summary>
+    ConstNull = 0x05,
+    /// <summary>Pop two references; push i32 1 if they are the same object (or both null).</summary>
+    EqRef = 0x6D,
+    /// <summary>
+    /// Allocate an instance of a class and run its constructor. Operands: u16 class, u16 constructor
+    /// function. Pops the constructor's arguments (excluding <c>this</c>), pushes the new reference.
+    /// </summary>
+    New = 0xA0,
+    /// <summary>Pop an object reference; push the field. Operand: u16 field.</summary>
+    LoadField = 0xA1,
+    /// <summary>Pop a value and an object reference; store the field. Operand: u16 field.</summary>
+    StoreField = 0xA2,
+    /// <summary>Virtual/interface call through a selector. Operand: u16 selector. The receiver is the first argument.</summary>
+    CallVirtual = 0xA3,
+    /// <summary>Pop a reference; push it if it is an instance of the class (or null otherwise). Operand: u16 class.</summary>
+    IsInstance = 0xA4,
+    /// <summary>Pop a reference; push it, trapping if it is non-null and not an instance of the class. Operand: u16 class.</summary>
+    CastClass = 0xA5,
+
+    // Arrays
+    /// <summary>Pop an i32 length; push a new zeroed array. Operand: u16 <see cref="VmArrayKind"/>.</summary>
+    NewArray = 0xA8,
+    /// <summary>Pop an i32 index and an array; push the element. Operand: u16 <see cref="VmElementAccess"/>.</summary>
+    LoadElement = 0xA9,
+    /// <summary>Pop a value, an i32 index and an array; store the element. Operand: u16 <see cref="VmElementAccess"/>.</summary>
+    StoreElement = 0xAA,
+    /// <summary>Pop an array; push its length as i32.</summary>
+    ArrayLength = 0xAB,
+
+    // Strings
+    /// <summary>Push a string from the module string table. Operand: u16 string index.</summary>
+    LoadString = 0xAC,
+    /// <summary>Pop a string; push its length.</summary>
+    StringLength = 0xB0,
+    /// <summary>Pop an i32 index and a string; push the UTF-16 code unit as i32.</summary>
+    StringCharAt = 0xB1,
+    /// <summary>Pop two strings; push their concatenation (null is treated as empty).</summary>
+    StringConcat = 0xB2,
+    /// <summary>Pop two strings; push i32 1 if they are equal by value (null-safe).</summary>
+    StringEquals = 0xB3,
 }
 
 /// <summary>Kind of immediate operand that follows an opcode.</summary>
@@ -245,6 +288,7 @@ internal enum OperandKind : byte
     F64,
     U16,
     BranchTarget,
+    U16Pair,
 }
 
 /// <summary>Static metadata about opcodes shared by builder, verifier, interpreter and disassembler.</summary>
@@ -263,7 +307,7 @@ internal static class OpCodeInfo
     {
         OperandKind.None => 0,
         OperandKind.U16 => 2,
-        OperandKind.I32 or OperandKind.F32 or OperandKind.BranchTarget => 4,
+        OperandKind.I32 or OperandKind.F32 or OperandKind.BranchTarget or OperandKind.U16Pair => 4,
         OperandKind.I64 or OperandKind.F64 => 8,
         _ => throw new ArgumentOutOfRangeException(nameof(kind)),
     };
@@ -280,7 +324,12 @@ internal static class OpCodeInfo
                 OpCode.ConstF32 => OperandKind.F32,
                 OpCode.ConstF64 => OperandKind.F64,
                 OpCode.LoadLocal or OpCode.StoreLocal or OpCode.LoadGlobal or OpCode.StoreGlobal
-                    or OpCode.Call or OpCode.Syscall => OperandKind.U16,
+                    or OpCode.Call or OpCode.Syscall
+                    or OpCode.LoadField or OpCode.StoreField or OpCode.CallVirtual
+                    or OpCode.IsInstance or OpCode.CastClass
+                    or OpCode.NewArray or OpCode.LoadElement or OpCode.StoreElement
+                    or OpCode.LoadString => OperandKind.U16,
+                OpCode.New => OperandKind.U16Pair,
                 OpCode.Branch or OpCode.BranchIfTrue or OpCode.BranchIfFalse => OperandKind.BranchTarget,
                 _ => OperandKind.None,
             };

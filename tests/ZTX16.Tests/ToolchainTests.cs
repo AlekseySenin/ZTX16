@@ -64,16 +64,15 @@ public class ToolchainCartridgeTests
         const string source = """
             using ZTX16;
 
-            [Cartridge]
-            public static class Game
+            public sealed class Game : ICartridge
             {
                 static int x = 100;
                 static int y = 50;
                 const int Speed = 2;
 
-                public static void Initialize() => Graphics.Fill(0, 18);
+                public void Initialize() => Graphics.Fill(0, 18);
 
-                public static void Tick()
+                public void Tick()
                 {
                     if (Input.WasKeyPressed(Key.Escape)) Machine.Exit();
                     if (Input.IsKeyDown(Key.Right)) x += Speed;
@@ -82,7 +81,7 @@ public class ToolchainCartridgeTests
                     y = Clamp(y, 0, 240);
                 }
 
-                public static void Render()
+                public void Render()
                 {
                     Graphics.Clear(2);
                     Graphics.FillRect(2, x, y, 16, 16, 11);
@@ -127,14 +126,13 @@ public class ToolchainCartridgeTests
                 static int Compute() => 3 * 3;
             }
 
-            [Cartridge]
-            public static class Game
+            public sealed class Game : ICartridge
             {
                 static byte counter = 250;
 
-                public static void Initialize() => Graphics.Fill(1, Settings.Color);
-                public static void Tick() { counter += 10; }   // wraps as a byte
-                public static void Render() => Graphics.SetPixel(1, 0, 0, counter);
+                public void Initialize() => Graphics.Fill(1, Settings.Color);
+                public void Tick() { counter += 10; }   // wraps as a byte
+                public void Render() => Graphics.SetPixel(1, 0, 0, counter);
             }
             """;
 
@@ -219,12 +217,11 @@ public class ToolchainSemanticsTests
             public static int Chars(char c) => c >= 'a' && c <= 'z' ? c - 32 : c;
         }
 
-        [Cartridge]
-        public static class Game
+        public sealed class Game : ICartridge
         {
             static double sink;
 
-            public static void Initialize()
+            public void Initialize()
             {
                 // Make every function reachable so the toolchain translates it.
                 sink = Fns.Arith(1, 2) + Fns.Div(1, 1) + Fns.UDiv(1, 1) + Fns.Shifts(1, 1) + Fns.Wide(1, 1)
@@ -233,8 +230,8 @@ public class ToolchainSemanticsTests
                     + Fns.Loop(1) + Fns.While(1) + Fns.Switch(1) + Fns.Fib(1) + Fns.EnumMath(Dir.Left) + Fns.Chars('a');
             }
 
-            public static void Tick() { }
-            public static void Render() { }
+            public void Tick() { }
+            public void Render() { }
         }
         """;
 
@@ -329,52 +326,46 @@ public class ToolchainRejectionTests
     private static string Cartridge(string members, string extraTypes = "") => $$"""
         using ZTX16;
         {{extraTypes}}
-        [Cartridge]
-        public static class Game
+        public sealed class Game : ICartridge
         {
-            public static void Initialize() { }
-            public static void Render() { }
+            public void Initialize() { }
+            public void Render() { }
             {{members}}
         }
         """;
 
     [Theory]
-    [InlineData("public static void Tick() { string s = \"hi\"; Graphics.Clear(s.Length); }", "strings")]
-    [InlineData("public static void Tick() { Graphics.Clear(System.Math.Abs(-1)); }", "System.Math.Abs")]
-    [InlineData("public static void Tick() { try { Graphics.Clear(0); } finally { Graphics.Clear(1); } }", "try/catch/finally")]
-    [InlineData("public static void Tick() { var a = new int[3]; Graphics.Clear(a.Length); }", "arrays")]
-    [InlineData("public static void Tick() { checked { int x = int.MaxValue; x++; Graphics.Clear(x); } }", "checked")]
-    public void UnsupportedFeaturesAreReportedClearly(string tick, string expectedFragment)
+    [InlineData("public void Tick() { Graphics.Clear(System.Math.Abs(-1)); }", "", "System.Math.Abs")]
+    [InlineData("public void Tick() { try { Graphics.Clear(0); } finally { Graphics.Clear(1); } }", "", "try/catch/finally")]
+    [InlineData("public void Tick() { checked { int x = int.MaxValue; x++; Graphics.Clear(x); } }", "", "checked")]
+    [InlineData("public void Tick() { var p = new P(); Graphics.Clear(p.X); }", "struct P { public int X; }", "struct")]
+    [InlineData("public void Tick() { var l = new System.Collections.Generic.List<int>(); }", "", "List")]
+    [InlineData("public void Tick() { System.Action a = () => Graphics.Clear(0); }", "", "delegates")]
+    [InlineData("public void Tick() { object o = 5; Graphics.Clear(o == null ? 0 : 1); }", "", "boxing")]
+    [InlineData("public void Tick() { int v = 0; Inc(ref v); } static void Inc(ref int x) => x++;", "", "ref")]
+    [InlineData("public void Tick() { var e = new E(); }", "class E : System.Exception { }", "System.Exception")]
+    public void UnsupportedFeaturesAreReportedClearly(string tick, string extraTypes, string expectedFragment)
     {
-        var e = Assert.Throws<TranslationException>(() => CartridgeCompiler.Translate(Cartridge(tick), optimize: false));
+        var e = Assert.Throws<TranslationException>(() => CartridgeCompiler.Translate(Cartridge(tick, extraTypes), optimize: false));
         Assert.Contains(expectedFragment, e.Message);
         Assert.Contains("Game.Tick", e.Message);
     }
 
     [Fact]
-    public void InstanceMembersAreRejected()
-    {
-        string source = Cartridge(
-            "public static void Tick() { var c = new Counter(); }",
-            "class Counter { int n; public void Inc() => n++; }");
-        var e = Assert.Throws<TranslationException>(() => CartridgeCompiler.Translate(source, optimize: true));
-        Assert.Contains("heap", e.Message);
-    }
-
-    [Fact]
-    public void MissingCartridgeAttributeIsReported()
+    public void MissingCartridgeClassIsReported()
     {
         const string source = "public static class Game { public static void Initialize() { } }";
         var e = Assert.Throws<TranslationException>(() => CartridgeCompiler.Translate(source, optimize: false));
-        Assert.Contains("[Cartridge]", e.Message);
+        Assert.Contains("ICartridge", e.Message);
     }
 
     [Fact]
-    public void LifecycleSignatureIsChecked()
+    public void MoreThanOneCartridgeClassIsReported()
     {
-        var e = Assert.Throws<TranslationException>(() =>
-            CartridgeCompiler.Translate(Cartridge("public static int Tick() => 0;"), optimize: false));
-        Assert.Contains("static void Tick()", e.Message);
+        string source = Cartridge("public void Tick() { }",
+            "public sealed class Other : ICartridge { public void Initialize() { } public void Tick() { } public void Render() { } }");
+        var e = Assert.Throws<TranslationException>(() => CartridgeCompiler.Translate(source, optimize: false));
+        Assert.Contains("More than one", e.Message);
     }
 }
 

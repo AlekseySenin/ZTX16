@@ -25,7 +25,7 @@ dotnet run --project src/ZTX16.Host -- --exe samples/HelloSquare/bin/Debug/net10
 
 HelloSquare: arrows / WASD / D-pad / left stick move the square, Space toggles the scrolling background, Escape exits.
 
-The current toolchain supports static methods and fields of numeric types, `bool`, `char` and enums. Classes, structs, arrays and strings arrive with the managed heap; until then the toolchain reports them as build errors.
+A cartridge is one class implementing `ZTX16.ICartridge` (`Initialize`, `Tick`, `Render`, optional `Deinitialize`). The toolchain supports numeric types, `bool`, `char`, enums, classes with inheritance and virtual methods, interfaces, arrays, strings and null, on a garbage-collected heap. Structs, generics (`List<T>`), lambdas and exceptions are not supported yet and are reported as build errors.
 
 ## Host options
 

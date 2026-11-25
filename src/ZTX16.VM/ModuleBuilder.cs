@@ -16,6 +16,46 @@ public sealed class ModuleBuilder
     private readonly Dictionary<string, int> _importIndex = new(StringComparer.Ordinal);
     private readonly List<FunctionBuilder> _functions = [];
     private readonly Dictionary<string, int> _exports = new(StringComparer.Ordinal);
+    private readonly List<ClassBuilder> _classes = [];
+    private readonly List<VmField> _fields = [];
+    private readonly List<VmSelector> _selectors = [];
+    private readonly List<string> _strings = [];
+    private readonly Dictionary<string, int> _stringIndex = new(StringComparer.Ordinal);
+
+    /// <summary>Defines a class or interface. Its dispatch table and interfaces can be filled in later.</summary>
+    public ClassBuilder DefineClass(string name, int baseClass, bool isInterface, IReadOnlyList<VmType> fields)
+    {
+        var builder = new ClassBuilder(_classes.Count, name, baseClass, isInterface, fields);
+        _classes.Add(builder);
+        return builder;
+    }
+
+    /// <summary>Adds an instance field reference and returns its index.</summary>
+    public int AddField(int classIndex, int slot)
+    {
+        _fields.Add(new VmField(classIndex, slot));
+        return _fields.Count - 1;
+    }
+
+    /// <summary>Adds a selector and returns its index.</summary>
+    public int AddSelector(string name, VmSignature signature)
+    {
+        _selectors.Add(new VmSelector(name, signature));
+        return _selectors.Count - 1;
+    }
+
+    /// <summary>Returns the index of a string literal, adding it on first use.</summary>
+    public int AddString(string value)
+    {
+        if (!_stringIndex.TryGetValue(value, out int index))
+        {
+            index = _strings.Count;
+            _strings.Add(value);
+            _stringIndex[value] = index;
+        }
+
+        return index;
+    }
 
     /// <summary>Adds a global and returns its index.</summary>
     public int AddGlobal(VmType type)
@@ -56,7 +96,46 @@ public sealed class ModuleBuilder
 
     /// <summary>Builds the module. Every function must be complete.</summary>
     public VmModule Build() =>
-        new(_globals, _imports, _functions.Select(f => f.Build()).ToArray(), _exports);
+        new(_globals, _imports, _functions.Select(f => f.Build()).ToArray(), _exports,
+            _classes.Select(c => c.Build()).ToArray(), _fields, _selectors, _strings);
+}
+
+/// <summary>Builds one class: layout is fixed at definition, interfaces and dispatch table are filled later.</summary>
+public sealed class ClassBuilder
+{
+    private readonly IReadOnlyList<VmType> _fields;
+
+    internal ClassBuilder(int index, string name, int baseClass, bool isInterface, IReadOnlyList<VmType> fields)
+    {
+        Index = index;
+        Name = name;
+        BaseClass = baseClass;
+        IsInterface = isInterface;
+        _fields = fields.ToArray();
+    }
+
+    /// <summary>Class index within the module.</summary>
+    public int Index { get; }
+
+    /// <summary>Class name.</summary>
+    public string Name { get; }
+
+    /// <summary>Base class index or <see cref="VmClass.NoBase"/>.</summary>
+    public int BaseClass { get; }
+
+    /// <summary>Whether this is an interface.</summary>
+    public bool IsInterface { get; }
+
+    /// <summary>Instance field slot types (base fields first).</summary>
+    public IReadOnlyList<VmType> Fields => _fields;
+
+    /// <summary>All implemented interfaces.</summary>
+    public HashSet<int> Interfaces { get; } = [];
+
+    /// <summary>Dispatch table: selector → function.</summary>
+    public Dictionary<int, int> Methods { get; } = [];
+
+    internal VmClass Build() => new(Name, BaseClass, IsInterface, _fields, Interfaces.Order().ToArray(), new Dictionary<int, int>(Methods));
 }
 
 /// <summary>Emits the code of one function.</summary>
@@ -146,6 +225,19 @@ public sealed class FunctionBuilder
         _code.Add((byte)op);
         _code.Add((byte)index);
         _code.Add((byte)(index >> 8));
+        return this;
+    }
+
+    /// <summary>Emits <see cref="OpCode.New"/>: allocate <paramref name="classIndex"/> and run <paramref name="constructor"/>.</summary>
+    public FunctionBuilder New(int classIndex, int constructor)
+    {
+        ArgumentOutOfRangeException.ThrowIfGreaterThan((uint)classIndex, ushort.MaxValue, nameof(classIndex));
+        ArgumentOutOfRangeException.ThrowIfGreaterThan((uint)constructor, ushort.MaxValue, nameof(constructor));
+        _code.Add((byte)OpCode.New);
+        _code.Add((byte)classIndex);
+        _code.Add((byte)(classIndex >> 8));
+        _code.Add((byte)constructor);
+        _code.Add((byte)(constructor >> 8));
         return this;
     }
 

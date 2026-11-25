@@ -23,6 +23,10 @@ public sealed class ExecutableFormatException : Exception
 /// u16 importCount   { str name, sig }
 /// u16 functionCount { str name, sig, u16 localCount { u8 type }, u32 codeLength, code }
 /// u16 exportCount   { str name, u16 functionIndex }
+/// u16 classCount    { str name, u16 base, u8 isInterface, u16 n { u8 fieldType }, u16 n { u16 interface }, u16 n { u16 selector, u16 function } }
+/// u16 fieldCount    { u16 class, u16 slot }
+/// u16 selectorCount { str name, sig }
+/// u16 stringCount   { u16 charCount, UTF-16 code units }
 /// sig = u8 paramCount { u8 type }, u8 resultType (0 = none)
 /// str = u16 byteLength, UTF-8 bytes
 /// </code>
@@ -31,7 +35,7 @@ public sealed class ExecutableFormatException : Exception
 public static class ExecutableFormat
 {
     /// <summary>Current executable format version.</summary>
-    public const ushort FormatVersion = 1;
+    public const ushort FormatVersion = 2;
 
     /// <summary>Upper bound on a single function's code size.</summary>
     public const int MaxCodeLength = 1 << 24;
@@ -81,6 +85,56 @@ public static class ExecutableFormat
             {
                 WriteString(writer, name);
                 WriteCount(writer, index);
+            }
+
+            WriteCount(writer, module.Classes.Count);
+            foreach (VmClass c in module.Classes)
+            {
+                WriteString(writer, c.Name);
+                WriteCount(writer, c.BaseClass);
+                writer.Write(c.IsInterface ? (byte)1 : (byte)0);
+                WriteCount(writer, c.Fields.Count);
+                foreach (VmType type in c.Fields)
+                {
+                    writer.Write((byte)type);
+                }
+
+                WriteCount(writer, c.Interfaces.Count);
+                foreach (int i in c.Interfaces)
+                {
+                    WriteCount(writer, i);
+                }
+
+                WriteCount(writer, c.Methods.Count);
+                foreach ((int selector, int function) in c.Methods.OrderBy(m => m.Key))
+                {
+                    WriteCount(writer, selector);
+                    WriteCount(writer, function);
+                }
+            }
+
+            WriteCount(writer, module.Fields.Count);
+            foreach (VmField field in module.Fields)
+            {
+                WriteCount(writer, field.Class);
+                WriteCount(writer, field.Slot);
+            }
+
+            WriteCount(writer, module.Selectors.Count);
+            foreach (VmSelector selector in module.Selectors)
+            {
+                WriteString(writer, selector.Name);
+                WriteSignature(writer, selector.Signature);
+            }
+
+            WriteCount(writer, module.Strings.Count);
+            foreach (string s in module.Strings)
+            {
+                WriteCount(writer, s.Length);
+                foreach (char ch in s)
+                {
+                    writer.Write((ushort)ch);
+                }
             }
         }
 
@@ -155,12 +209,68 @@ public static class ExecutableFormat
                 }
             }
 
+            var classes = new VmClass[reader.ReadUInt16()];
+            for (int i = 0; i < classes.Length; i++)
+            {
+                string name = ReadString(reader);
+                int baseClass = reader.ReadUInt16();
+                bool isInterface = reader.ReadByte() != 0;
+                var fieldTypes = new VmType[reader.ReadUInt16()];
+                for (int f = 0; f < fieldTypes.Length; f++)
+                {
+                    fieldTypes[f] = (VmType)reader.ReadByte();
+                }
+
+                var interfaces = new int[reader.ReadUInt16()];
+                for (int f = 0; f < interfaces.Length; f++)
+                {
+                    interfaces[f] = reader.ReadUInt16();
+                }
+
+                int methodCount = reader.ReadUInt16();
+                var methods = new Dictionary<int, int>(methodCount);
+                for (int m = 0; m < methodCount; m++)
+                {
+                    int selector = reader.ReadUInt16();
+                    if (!methods.TryAdd(selector, reader.ReadUInt16()))
+                    {
+                        throw new ExecutableFormatException($"Class '{name}' maps selector {selector} twice.");
+                    }
+                }
+
+                classes[i] = new VmClass(name, baseClass, isInterface, fieldTypes, interfaces, methods);
+            }
+
+            var fields = new VmField[reader.ReadUInt16()];
+            for (int i = 0; i < fields.Length; i++)
+            {
+                fields[i] = new VmField(reader.ReadUInt16(), reader.ReadUInt16());
+            }
+
+            var selectors = new VmSelector[reader.ReadUInt16()];
+            for (int i = 0; i < selectors.Length; i++)
+            {
+                selectors[i] = new VmSelector(ReadString(reader), ReadSignature(reader));
+            }
+
+            var strings = new string[reader.ReadUInt16()];
+            for (int i = 0; i < strings.Length; i++)
+            {
+                var chars = new char[reader.ReadUInt16()];
+                for (int c = 0; c < chars.Length; c++)
+                {
+                    chars[c] = (char)reader.ReadUInt16();
+                }
+
+                strings[i] = new string(chars);
+            }
+
             if (stream.Position != stream.Length)
             {
                 throw new ExecutableFormatException("Trailing bytes after executable.");
             }
 
-            return new VmModule(globals, imports, functions, exports);
+            return new VmModule(globals, imports, functions, exports, classes, fields, selectors, strings);
         }
         catch (EndOfStreamException e)
         {

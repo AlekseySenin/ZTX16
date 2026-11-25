@@ -16,10 +16,11 @@ public sealed class VerificationException : Exception
 /// <summary>A module that passed verification, with per-function facts the interpreter relies on.</summary>
 public sealed class VerifiedModule
 {
-    internal VerifiedModule(VmModule module, int[] maxStack)
+    internal VerifiedModule(VmModule module, int[] maxStack, Dictionary<int, VmType[]>[] stackMaps)
     {
         Module = module;
         MaxStack = maxStack;
+        StackMaps = stackMaps;
     }
 
     /// <summary>The verified module.</summary>
@@ -27,6 +28,12 @@ public sealed class VerifiedModule
 
     /// <summary>Maximum operand stack depth of each function.</summary>
     internal int[] MaxStack { get; }
+
+    /// <summary>
+    /// Per function: operand-stack types (bottom first) before each GC safepoint instruction
+    /// (allocations and calls). The garbage collector uses them to find references precisely.
+    /// </summary>
+    internal Dictionary<int, VmType[]>[] StackMaps { get; }
 }
 
 /// <summary>
@@ -89,13 +96,92 @@ public static class Verifier
             }
         }
 
+        VerifyTypes(module);
+
         int[] maxStack = new int[module.Functions.Count];
+        var stackMaps = new Dictionary<int, VmType[]>[module.Functions.Count];
         for (int i = 0; i < module.Functions.Count; i++)
         {
-            maxStack[i] = new FunctionVerifier(module, module.Functions[i]).Run();
+            (maxStack[i], stackMaps[i]) = new FunctionVerifier(module, module.Functions[i]).Run();
         }
 
-        return new VerifiedModule(module, maxStack);
+        return new VerifiedModule(module, maxStack, stackMaps);
+    }
+
+    private static void VerifyTypes(VmModule module)
+    {
+        foreach (VmSelector selector in module.Selectors)
+        {
+            RequireSignature(selector.Signature, $"selector '{selector.Name}'");
+            if (selector.Signature.Parameters.Count == 0 || selector.Signature.Parameters[0] != VmType.Ref)
+            {
+                throw new VerificationException($"Selector '{selector.Name}' must take a reference receiver as its first parameter.");
+            }
+        }
+
+        for (int i = 0; i < module.Classes.Count; i++)
+        {
+            VmClass c = module.Classes[i];
+            foreach (VmType type in c.Fields)
+            {
+                RequireType(type, $"field of class '{c.Name}'");
+            }
+
+            if (c.BaseClass != VmClass.NoBase)
+            {
+                // Bases precede derived classes, which also rules out cycles.
+                if (c.BaseClass >= i)
+                {
+                    throw new VerificationException($"Class '{c.Name}' must be defined after its base class.");
+                }
+
+                VmClass baseClass = module.Classes[c.BaseClass];
+                if (baseClass.IsInterface || c.IsInterface)
+                {
+                    throw new VerificationException($"Class '{c.Name}': interfaces cannot take part in class inheritance.");
+                }
+
+                if (c.Fields.Count < baseClass.Fields.Count || !c.Fields.Take(baseClass.Fields.Count).SequenceEqual(baseClass.Fields))
+                {
+                    throw new VerificationException($"Class '{c.Name}' does not extend the field layout of '{baseClass.Name}'.");
+                }
+            }
+
+            if (c.IsInterface && c.Fields.Count != 0)
+            {
+                throw new VerificationException($"Interface '{c.Name}' cannot have fields.");
+            }
+
+            foreach (int iface in c.Interfaces)
+            {
+                if ((uint)iface >= (uint)module.Classes.Count || !module.Classes[iface].IsInterface)
+                {
+                    throw new VerificationException($"Class '{c.Name}' lists {iface}, which is not an interface.");
+                }
+            }
+
+            foreach ((int selector, int function) in c.Methods)
+            {
+                if ((uint)selector >= (uint)module.Selectors.Count || (uint)function >= (uint)module.Functions.Count)
+                {
+                    throw new VerificationException($"Class '{c.Name}' has an invalid dispatch entry.");
+                }
+
+                if (!module.Functions[function].Signature.Matches(module.Selectors[selector].Signature))
+                {
+                    throw new VerificationException(
+                        $"Class '{c.Name}': '{module.Functions[function].Name}' does not match selector '{module.Selectors[selector].Name}'.");
+                }
+            }
+        }
+
+        foreach (VmField field in module.Fields)
+        {
+            if ((uint)field.Class >= (uint)module.Classes.Count || (uint)field.Slot >= (uint)module.Classes[field.Class].Fields.Count)
+            {
+                throw new VerificationException("Field reference out of range.");
+            }
+        }
     }
 
     private static void RequireType(VmType type, string what)
@@ -132,7 +218,9 @@ public static class Verifier
             _function = function;
         }
 
-        public int Run()
+        private readonly Dictionary<int, VmType[]> _stackMaps = [];
+
+        public (int MaxDepth, Dictionary<int, VmType[]> StackMaps) Run()
         {
             Decode();
             if (_instructions.Count == 0)
@@ -151,6 +239,10 @@ public static class Verifier
             {
                 var stack = new TypeStack(states[index]!, depths[index], this, _instructions[index].Offset);
                 (int offset, OpCode op, long operand) = _instructions[index];
+                if (IsSafepoint(op))
+                {
+                    _stackMaps[offset] = stack.Items.Reverse().ToArray();
+                }
 
                 bool fallsThrough = Step(op, operand, ref stack, offset, out int? branchTarget);
                 maxDepth = Math.Max(maxDepth, stack.MaxDepth);
@@ -176,8 +268,12 @@ public static class Verifier
                 }
             }
 
-            return maxDepth;
+            return (maxDepth, _stackMaps);
         }
+
+        /// <summary>Instructions at which the garbage collector may run or which leave this frame.</summary>
+        public static bool IsSafepoint(OpCode op) => op is OpCode.Call or OpCode.CallVirtual or OpCode.Syscall
+            or OpCode.New or OpCode.NewArray or OpCode.StringConcat;
 
         public VerificationException Fail(int offset, string message) =>
             new($"Function '{_function.Name}' at offset {offset}: {message}.");
@@ -224,6 +320,7 @@ public static class Verifier
                     OperandKind.None => 0,
                     OperandKind.U16 => BinaryPrimitives.ReadUInt16LittleEndian(code[pc..]),
                     OperandKind.I32 or OperandKind.F32 or OperandKind.BranchTarget => BinaryPrimitives.ReadInt32LittleEndian(code[pc..]),
+                    OperandKind.U16Pair => BinaryPrimitives.ReadUInt32LittleEndian(code[pc..]),
                     _ => BinaryPrimitives.ReadInt64LittleEndian(code[pc..]),
                 };
                 pc += size;
@@ -308,6 +405,125 @@ public static class Verifier
                     }
 
                     return false;
+
+                case OpCode.ConstNull:
+                    s.Push(VmType.Ref);
+                    return true;
+
+                case OpCode.EqRef:
+                case OpCode.StringEquals:
+                    s.Pop(VmType.Ref);
+                    s.Pop(VmType.Ref);
+                    s.Push(VmType.I32);
+                    return true;
+
+                case OpCode.New:
+                    {
+                        int classIndex = (int)(operand & 0xFFFF);
+                        int constructor = (int)(operand >> 16);
+                        if (classIndex >= _module.Classes.Count || _module.Classes[classIndex].IsInterface)
+                        {
+                            throw Fail(offset, $"'new' of invalid class {classIndex}");
+                        }
+
+                        if (constructor >= _module.Functions.Count)
+                        {
+                            throw Fail(offset, $"constructor {constructor} out of range");
+                        }
+
+                        VmSignature ctor = _module.Functions[constructor].Signature;
+                        if (ctor.Result is not null || ctor.Parameters.Count == 0 || ctor.Parameters[0] != VmType.Ref)
+                        {
+                            throw Fail(offset, "constructor must take the new instance first and return nothing");
+                        }
+
+                        for (int i = ctor.Parameters.Count - 1; i >= 1; i--)
+                        {
+                            s.Pop(ctor.Parameters[i]);
+                        }
+
+                        s.Push(VmType.Ref);
+                        return true;
+                    }
+
+                case OpCode.LoadField:
+                    s.Pop(VmType.Ref);
+                    s.Push(Field(operand, offset));
+                    return true;
+
+                case OpCode.StoreField:
+                    s.Pop(Field(operand, offset));
+                    s.Pop(VmType.Ref);
+                    return true;
+
+                case OpCode.CallVirtual:
+                    if (operand >= _module.Selectors.Count)
+                    {
+                        throw Fail(offset, $"selector {operand} out of range");
+                    }
+
+                    ApplySignature(_module.Selectors[(int)operand].Signature, ref s);
+                    return true;
+
+                case OpCode.IsInstance:
+                case OpCode.CastClass:
+                    if (operand >= _module.Classes.Count)
+                    {
+                        throw Fail(offset, $"class {operand} out of range");
+                    }
+
+                    s.Pop(VmType.Ref);
+                    s.Push(VmType.Ref);
+                    return true;
+
+                case OpCode.NewArray:
+                    if (operand is < (long)VmArrayKind.Bits8 or > (long)VmArrayKind.Ref)
+                    {
+                        throw Fail(offset, $"invalid array kind {operand}");
+                    }
+
+                    s.Pop(VmType.I32);
+                    s.Push(VmType.Ref);
+                    return true;
+
+                case OpCode.LoadElement:
+                    s.Pop(VmType.I32);
+                    s.Pop(VmType.Ref);
+                    s.Push(VmTypes.OfAccess(Access(operand, offset)));
+                    return true;
+
+                case OpCode.StoreElement:
+                    s.Pop(VmTypes.OfAccess(Access(operand, offset)));
+                    s.Pop(VmType.I32);
+                    s.Pop(VmType.Ref);
+                    return true;
+
+                case OpCode.ArrayLength:
+                case OpCode.StringLength:
+                    s.Pop(VmType.Ref);
+                    s.Push(VmType.I32);
+                    return true;
+
+                case OpCode.LoadString:
+                    if (operand >= _module.Strings.Count)
+                    {
+                        throw Fail(offset, $"string {operand} out of range");
+                    }
+
+                    s.Push(VmType.Ref);
+                    return true;
+
+                case OpCode.StringCharAt:
+                    s.Pop(VmType.I32);
+                    s.Pop(VmType.Ref);
+                    s.Push(VmType.I32);
+                    return true;
+
+                case OpCode.StringConcat:
+                    s.Pop(VmType.Ref);
+                    s.Pop(VmType.Ref);
+                    s.Push(VmType.Ref);
+                    return true;
 
                 case OpCode.ShlI64:
                 case OpCode.ShrI64:
@@ -395,6 +611,26 @@ public static class Verifier
             }
 
             return _function.LocalType((int)index);
+        }
+
+        private VmType Field(long index, int offset)
+        {
+            if (index >= _module.Fields.Count)
+            {
+                throw Fail(offset, $"field {index} out of range");
+            }
+
+            return _module.FieldType((int)index);
+        }
+
+        private VmElementAccess Access(long value, int offset)
+        {
+            if (value is < (long)VmElementAccess.I8 or > (long)VmElementAccess.Ref)
+            {
+                throw Fail(offset, $"invalid element access {value}");
+            }
+
+            return (VmElementAccess)value;
         }
 
         private VmType Global(long index, int offset)

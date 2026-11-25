@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Reflection;
 using System.Reflection.Metadata;
 using ZTX16.Abi;
 using ZTX16.VM;
@@ -17,8 +18,23 @@ internal sealed record PrimitiveClrType(PrimitiveTypeCode Code) : ClrType(Code.T
 /// <summary>An enum, represented by its underlying primitive type.</summary>
 internal sealed record EnumClrType(string FullName, PrimitiveTypeCode Underlying) : ClrType(FullName);
 
-/// <summary>Any type the VM cannot represent yet (classes, structs, arrays, strings, pointers…).</summary>
-internal sealed record UnsupportedClrType(string Description) : ClrType(Description);
+/// <summary>A class or interface defined in the cartridge.</summary>
+internal sealed record ClassClrType(TypeDefinitionHandle Handle, string FullName, bool IsInterface) : ClrType(FullName);
+
+/// <summary>An interface defined by the SDK (e.g. <c>ZTX16.ICartridge</c>).</summary>
+internal sealed record SdkInterfaceClrType(string FullName) : ClrType(FullName);
+
+/// <summary><c>System.String</c>.</summary>
+internal sealed record StringClrType() : ClrType("string");
+
+/// <summary><c>System.Object</c>.</summary>
+internal sealed record ObjectClrType() : ClrType("object");
+
+/// <summary>A one-dimensional, zero-based array.</summary>
+internal sealed record ArrayClrType(ClrType Element) : ClrType($"{Element}[]");
+
+/// <summary>Any type the VM cannot represent yet (structs, generics, pointers, multi-dimensional arrays…).</summary>
+internal sealed record UnsupportedClrType(string Description, string Reason) : ClrType(Description);
 
 /// <summary>How a CLR type is stored in the VM.</summary>
 /// <param name="Type">VM slot type, or null for void.</param>
@@ -31,12 +47,25 @@ internal static class ClrTypeMapping
     /// <summary>Maps <paramref name="type"/> or throws a translation error naming <paramref name="context"/>.</summary>
     public static VmTypeInfo Map(ClrType type, string context)
     {
-        PrimitiveTypeCode code = type switch
+        PrimitiveTypeCode code;
+        switch (type)
         {
-            PrimitiveClrType p => p.Code,
-            EnumClrType e => e.Underlying,
-            _ => throw new TranslationException($"{context}: type '{type}' is not supported yet; {UnsupportedReason(type)}."),
-        };
+            case PrimitiveClrType p:
+                code = p.Code;
+                break;
+            case EnumClrType e:
+                code = e.Underlying;
+                break;
+            case ClassClrType or SdkInterfaceClrType or StringClrType or ObjectClrType:
+                return new(VmType.Ref, null);
+            case ArrayClrType array:
+                ElementAccess(array.Element, context); // validates the element type
+                return new(VmType.Ref, null);
+            case UnsupportedClrType u:
+                throw new TranslationException($"{context}: type '{u.Description}' is not supported yet ({u.Reason}).");
+            default:
+                throw new TranslationException($"{context}: type '{type}' is not supported yet.");
+        }
 
         return code switch
         {
@@ -54,13 +83,6 @@ internal static class ClrTypeMapping
         };
     }
 
-    private static string UnsupportedReason(ClrType type) => type.Display switch
-    {
-        "string" => "strings arrive with the managed heap",
-        var d when d.EndsWith("[]", StringComparison.Ordinal) || d.EndsWith("[,]", StringComparison.Ordinal) => "arrays arrive with the managed heap",
-        _ => "this iteration supports numeric types, bool, char and enums only; classes and structs arrive with the managed heap",
-    };
-
     /// <summary>Maps a value type (never void).</summary>
     public static VmTypeInfo MapValue(ClrType type, string context)
     {
@@ -73,35 +95,72 @@ internal static class ClrTypeMapping
         return info;
     }
 
-    /// <summary>Converts a decoded method signature into a VM signature.</summary>
-    public static VmSignature ToVmSignature(MethodSignature<ClrType> signature, string context) =>
-        new(signature.ParameterTypes.Select((p, i) => MapValue(p, $"{context} parameter {i}").Type!.Value).ToArray(),
-            Map(signature.ReturnType, $"{context} return type").Type);
+    /// <summary>How elements of an array with element type <paramref name="element"/> are accessed.</summary>
+    public static VmElementAccess ElementAccess(ClrType element, string context)
+    {
+        PrimitiveTypeCode? code = element switch
+        {
+            PrimitiveClrType p => p.Code,
+            EnumClrType e => e.Underlying,
+            _ => null,
+        };
+
+        if (code is null)
+        {
+            VmTypeInfo info = MapValue(element, $"{context} array element");
+            return info.Type == VmType.Ref
+                ? VmElementAccess.Ref
+                : throw new TranslationException($"{context}: arrays of '{element}' are not supported.");
+        }
+
+        return code switch
+        {
+            PrimitiveTypeCode.SByte => VmElementAccess.I8,
+            PrimitiveTypeCode.Byte or PrimitiveTypeCode.Boolean => VmElementAccess.U8,
+            PrimitiveTypeCode.Int16 => VmElementAccess.I16,
+            PrimitiveTypeCode.UInt16 or PrimitiveTypeCode.Char => VmElementAccess.U16,
+            PrimitiveTypeCode.Int32 or PrimitiveTypeCode.UInt32 => VmElementAccess.I32,
+            PrimitiveTypeCode.Int64 or PrimitiveTypeCode.UInt64 => VmElementAccess.I64,
+            PrimitiveTypeCode.Single => VmElementAccess.F32,
+            PrimitiveTypeCode.Double => VmElementAccess.F64,
+            _ => throw new TranslationException($"{context}: arrays of '{element}' are not supported."),
+        };
+    }
+
+    /// <summary>Converts a decoded method signature into a VM signature; instance methods get a leading receiver.</summary>
+    public static VmSignature ToVmSignature(MethodSignature<ClrType> signature, string context, bool hasThis = false)
+    {
+        IEnumerable<VmType> parameters = signature.ParameterTypes.Select((p, i) => MapValue(p, $"{context} parameter {i}").Type!.Value);
+        if (hasThis)
+        {
+            parameters = parameters.Prepend(VmType.Ref);
+        }
+
+        return new(parameters.ToArray(), Map(signature.ReturnType, $"{context} return type").Type);
+    }
+
+    /// <summary>A stable text key for matching overrides and interface implementations.</summary>
+    public static string SignatureKey(string name, MethodSignature<ClrType> signature) =>
+        $"{name}({string.Join(",", signature.ParameterTypes)}):{signature.ReturnType}";
 }
 
 /// <summary>
-/// Decodes metadata signatures into <see cref="ClrType"/>. Enums defined in the cartridge
-/// are resolved from its own metadata; enums referenced from the SDK are resolved by
-/// reflection over the SDK assembly.
+/// Decodes metadata signatures into <see cref="ClrType"/>. Cartridge types are resolved from
+/// its own metadata; SDK enums and interfaces by reflection over the SDK assembly; the
+/// handful of supported <c>System</c> types by name.
 /// </summary>
 internal sealed class ClrTypeProvider : ISignatureTypeProvider<ClrType, object?>
 {
     private const string SdkAssemblyName = "ZTX16.Sdk";
 
-    private readonly MetadataReader _reader;
     private readonly Dictionary<TypeDefinitionHandle, ClrType> _definitionCache = [];
-
-    public ClrTypeProvider(MetadataReader reader)
-    {
-        _reader = reader;
-    }
 
     public ClrType GetPrimitiveType(PrimitiveTypeCode typeCode) => typeCode switch
     {
-        PrimitiveTypeCode.String => new UnsupportedClrType("string"),
-        PrimitiveTypeCode.Object => new UnsupportedClrType("object"),
-        PrimitiveTypeCode.IntPtr or PrimitiveTypeCode.UIntPtr => new UnsupportedClrType("native int"),
-        PrimitiveTypeCode.TypedReference => new UnsupportedClrType("TypedReference"),
+        PrimitiveTypeCode.String => new StringClrType(),
+        PrimitiveTypeCode.Object => new ObjectClrType(),
+        PrimitiveTypeCode.IntPtr or PrimitiveTypeCode.UIntPtr => new UnsupportedClrType("native int", "native integers are not part of the ZTX16 model"),
+        PrimitiveTypeCode.TypedReference => new UnsupportedClrType("TypedReference", "not supported"),
         _ => new PrimitiveClrType(typeCode),
     };
 
@@ -114,10 +173,12 @@ internal sealed class ClrTypeProvider : ISignatureTypeProvider<ClrType, object?>
 
         TypeDefinition definition = reader.GetTypeDefinition(handle);
         string fullName = FullName(reader, definition.Namespace, definition.Name);
-        ClrType result = new UnsupportedClrType(fullName);
+        string? baseName = BaseTypeName(reader, definition);
+        ClrType result;
 
-        if (IsEnum(reader, definition))
+        if (baseName == "System.Enum")
         {
+            result = new UnsupportedClrType(fullName, "enum without a value field");
             foreach (FieldDefinitionHandle fieldHandle in definition.GetFields())
             {
                 FieldDefinition field = reader.GetFieldDefinition(fieldHandle);
@@ -128,6 +189,18 @@ internal sealed class ClrTypeProvider : ISignatureTypeProvider<ClrType, object?>
                     break;
                 }
             }
+        }
+        else if (baseName == "System.ValueType")
+        {
+            result = new UnsupportedClrType($"struct {fullName}", "structs are not supported yet; use a class");
+        }
+        else if (definition.GetGenericParameters().Count > 0)
+        {
+            result = new UnsupportedClrType(fullName, "generic types are not supported yet");
+        }
+        else
+        {
+            result = new ClassClrType(handle, fullName, (definition.Attributes & TypeAttributes.Interface) != 0);
         }
 
         _definitionCache[handle] = result;
@@ -142,49 +215,73 @@ internal sealed class ClrTypeProvider : ISignatureTypeProvider<ClrType, object?>
         if (reference.ResolutionScope.Kind == HandleKind.AssemblyReference)
         {
             AssemblyReference assembly = reader.GetAssemblyReference((AssemblyReferenceHandle)reference.ResolutionScope);
-            if (reader.GetString(assembly.Name) == SdkAssemblyName
-                && SdkAbi.SdkAssembly.GetType(fullName) is { IsEnum: true } sdkEnum)
+            if (reader.GetString(assembly.Name) == SdkAssemblyName && SdkAbi.SdkAssembly.GetType(fullName) is { } sdkType)
             {
-                return new EnumClrType(fullName, Type.GetTypeCode(Enum.GetUnderlyingType(sdkEnum)) switch
+                if (sdkType.IsEnum)
                 {
-                    TypeCode.SByte => PrimitiveTypeCode.SByte,
-                    TypeCode.Byte => PrimitiveTypeCode.Byte,
-                    TypeCode.Int16 => PrimitiveTypeCode.Int16,
-                    TypeCode.UInt16 => PrimitiveTypeCode.UInt16,
-                    TypeCode.Int32 => PrimitiveTypeCode.Int32,
-                    TypeCode.UInt32 => PrimitiveTypeCode.UInt32,
-                    TypeCode.Int64 => PrimitiveTypeCode.Int64,
-                    _ => PrimitiveTypeCode.UInt64,
-                });
+                    return new EnumClrType(fullName, ToPrimitive(Enum.GetUnderlyingType(sdkType)));
+                }
+
+                if (sdkType.IsInterface)
+                {
+                    return new SdkInterfaceClrType(fullName);
+                }
             }
         }
 
-        return new UnsupportedClrType(fullName);
+        return fullName switch
+        {
+            "System.Boolean" => new PrimitiveClrType(PrimitiveTypeCode.Boolean),
+            "System.Char" => new PrimitiveClrType(PrimitiveTypeCode.Char),
+            "System.SByte" => new PrimitiveClrType(PrimitiveTypeCode.SByte),
+            "System.Byte" => new PrimitiveClrType(PrimitiveTypeCode.Byte),
+            "System.Int16" => new PrimitiveClrType(PrimitiveTypeCode.Int16),
+            "System.UInt16" => new PrimitiveClrType(PrimitiveTypeCode.UInt16),
+            "System.Int32" => new PrimitiveClrType(PrimitiveTypeCode.Int32),
+            "System.UInt32" => new PrimitiveClrType(PrimitiveTypeCode.UInt32),
+            "System.Int64" => new PrimitiveClrType(PrimitiveTypeCode.Int64),
+            "System.UInt64" => new PrimitiveClrType(PrimitiveTypeCode.UInt64),
+            "System.Single" => new PrimitiveClrType(PrimitiveTypeCode.Single),
+            "System.Double" => new PrimitiveClrType(PrimitiveTypeCode.Double),
+            "System.String" => new StringClrType(),
+            "System.Object" => new ObjectClrType(),
+            _ when fullName.StartsWith("System.Action", StringComparison.Ordinal)
+                || fullName.StartsWith("System.Func", StringComparison.Ordinal)
+                || fullName.StartsWith("System.Predicate", StringComparison.Ordinal)
+                || fullName is "System.Delegate" or "System.MulticastDelegate" or "System.EventHandler"
+                => new UnsupportedClrType(fullName, "delegates and lambdas are not supported yet"),
+            _ => new UnsupportedClrType(fullName, "only cartridge types, ZTX16 SDK types and core primitives can be used"),
+        };
     }
 
     public ClrType GetTypeFromSpecification(MetadataReader reader, object? genericContext, TypeSpecificationHandle handle, byte rawTypeKind) =>
-        new UnsupportedClrType("generic type");
+        reader.GetTypeSpecification(handle).DecodeSignature(this, genericContext);
 
-    public ClrType GetSZArrayType(ClrType elementType) => new UnsupportedClrType($"{elementType}[]");
+    public ClrType GetSZArrayType(ClrType elementType) => new ArrayClrType(elementType);
 
-    public ClrType GetArrayType(ClrType elementType, ArrayShape shape) => new UnsupportedClrType($"{elementType}[,]");
+    public ClrType GetArrayType(ClrType elementType, ArrayShape shape) =>
+        new UnsupportedClrType($"{elementType}[,]", "multi-dimensional arrays are not supported; use jagged arrays");
 
-    public ClrType GetByReferenceType(ClrType elementType) => new UnsupportedClrType($"ref {elementType}");
+    public ClrType GetByReferenceType(ClrType elementType) =>
+        new UnsupportedClrType($"ref {elementType}", "ref/out/in parameters are not supported yet");
 
-    public ClrType GetPointerType(ClrType elementType) => new UnsupportedClrType($"{elementType}*");
+    public ClrType GetPointerType(ClrType elementType) => new UnsupportedClrType($"{elementType}*", "pointers are not part of the ZTX16 model");
 
     public ClrType GetPinnedType(ClrType elementType) => elementType;
 
     public ClrType GetModifiedType(ClrType modifier, ClrType unmodifiedType, bool isRequired) => unmodifiedType;
 
-    public ClrType GetFunctionPointerType(MethodSignature<ClrType> signature) => new UnsupportedClrType("function pointer");
+    public ClrType GetFunctionPointerType(MethodSignature<ClrType> signature) =>
+        new UnsupportedClrType("function pointer", "pointers are not part of the ZTX16 model");
 
     public ClrType GetGenericInstantiation(ClrType genericType, ImmutableArray<ClrType> typeArguments) =>
-        new UnsupportedClrType($"{genericType}<…>");
+        new UnsupportedClrType($"{genericType}<{string.Join(", ", typeArguments)}>", "generics are not supported yet");
 
-    public ClrType GetGenericMethodParameter(object? genericContext, int index) => new UnsupportedClrType($"!!{index}");
+    public ClrType GetGenericMethodParameter(object? genericContext, int index) =>
+        new UnsupportedClrType($"!!{index}", "generics are not supported yet");
 
-    public ClrType GetGenericTypeParameter(object? genericContext, int index) => new UnsupportedClrType($"!{index}");
+    public ClrType GetGenericTypeParameter(object? genericContext, int index) =>
+        new UnsupportedClrType($"!{index}", "generics are not supported yet");
 
     public static string FullName(MetadataReader reader, StringHandle ns, StringHandle name)
     {
@@ -192,15 +289,35 @@ internal sealed class ClrTypeProvider : ISignatureTypeProvider<ClrType, object?>
         return n.Length == 0 ? reader.GetString(name) : $"{n}.{reader.GetString(name)}";
     }
 
-    private static bool IsEnum(MetadataReader reader, TypeDefinition definition)
+    public static string? BaseTypeName(MetadataReader reader, TypeDefinition definition)
     {
         EntityHandle baseType = definition.BaseType;
-        if (baseType.Kind != HandleKind.TypeReference)
+        if (baseType.IsNil)
         {
-            return false;
+            return null; // interfaces and <Module>
         }
 
-        TypeReference reference = reader.GetTypeReference((TypeReferenceHandle)baseType);
-        return reader.GetString(reference.Namespace) == "System" && reader.GetString(reference.Name) == "Enum";
+        return baseType.Kind switch
+        {
+            HandleKind.TypeReference => FullName(reader,
+                reader.GetTypeReference((TypeReferenceHandle)baseType).Namespace,
+                reader.GetTypeReference((TypeReferenceHandle)baseType).Name),
+            HandleKind.TypeDefinition => FullName(reader,
+                reader.GetTypeDefinition((TypeDefinitionHandle)baseType).Namespace,
+                reader.GetTypeDefinition((TypeDefinitionHandle)baseType).Name),
+            _ => null,
+        };
     }
+
+    private static PrimitiveTypeCode ToPrimitive(Type type) => Type.GetTypeCode(type) switch
+    {
+        TypeCode.SByte => PrimitiveTypeCode.SByte,
+        TypeCode.Byte => PrimitiveTypeCode.Byte,
+        TypeCode.Int16 => PrimitiveTypeCode.Int16,
+        TypeCode.UInt16 => PrimitiveTypeCode.UInt16,
+        TypeCode.Int32 => PrimitiveTypeCode.Int32,
+        TypeCode.UInt32 => PrimitiveTypeCode.UInt32,
+        TypeCode.Int64 => PrimitiveTypeCode.Int64,
+        _ => PrimitiveTypeCode.UInt64,
+    };
 }

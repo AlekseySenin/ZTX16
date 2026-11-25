@@ -94,11 +94,11 @@ forwarded to the session.
 - `src/ZTX16.Toolchain` builds `ztx16c`, the IL → ZTX16 translator. Cartridges reference it only for build order.
 - Input enums (`Key`, `MouseButton`, `GamepadButton`, `GamepadAxis`) moved into the SDK; the runtime uses the same types.
 
-### Provisional cartridge shape (until the VM has a heap)
+### Cartridge shape
 
-- Entry point: a static class marked `[Cartridge]` with `static void Initialize()`, `Tick()`, `Render()`
-  and optional `Deinitialize()`. It becomes the platform lifecycle interface once classes are supported.
-- SDK API is flat and static (`Graphics.FillRect(layer, …)`); object-style APIs follow with the heap.
+- VM-2 used a provisional static class marked `[Cartridge]`. **VM-3 replaced it** with the specified
+  lifecycle interface `ZTX16.ICartridge` (see below); `[Cartridge]` no longer exists.
+- SDK API is still flat and static (`Graphics.FillRect(layer, …)`); object-style APIs are future work.
 
 ### Translation rules
 
@@ -119,3 +119,45 @@ forwarded to the session.
 A cartridge `.csproj` imports `src/ZTX16.Toolchain/build/ZTX16.Cartridge.targets`. After `Build` it runs
 `ztx16c` and writes `bin/<config>/net10.0/<AssemblyName>.ztxe`. See `samples/HelloSquare`. The proper
 Project → Cartridge build (resources, Project Config, packed cartridge) is the next milestone.
+
+## VM-3 — managed heap
+
+### VM
+
+- New value type `Ref`: a handle to a heap object (index + 1), 0 is null.
+- Heap objects: class instances (one slot per field, base fields first), one-dimensional arrays with
+  typed storage (8/16/32/64-bit integers, f32, f64, refs), immutable UTF-16 strings.
+- Classes are module metadata: base class, full field layout, all implemented interfaces, and a dispatch
+  table selector → function. Virtual and interface calls both go through **selectors**
+  (`CallVirtual`); type tests use the class's precomputed assignability set.
+- **Garbage collector:** non-moving mark-sweep, run when 4 MB have been allocated since the last
+  collection or when the heap would exceed its limit. **Precise roots**: string literals, `Ref` globals,
+  `Ref` locals of every active frame, and the `Ref` entries of the operand stack taken from verifier
+  stack maps recorded at each safepoint (allocations and calls). In calling frames, the operands that
+  became the callee's parameters are scanned as the callee's locals.
+- **Provisional limits:** heap 32 MB, collection threshold 4 MB (`VmHeap`).
+- Executable format version 2 adds class, field, selector and string tables.
+- Runtime checks that keep the heap memory- and type-safe without a class-aware verifier: null
+  dereference, field owner vs. object class, array storage vs. element access, array bounds, negative
+  array length, invalid cast, missing dispatch entry. All are traps.
+
+### Toolchain
+
+- **Entry point:** exactly one non-abstract class implementing `ZTX16.ICartridge`, with a parameterless
+  constructor. The runtime creates it once after all static constructors ran. `Deinitialize` is an
+  optional default interface method; it is exported only if the cartridge implements it.
+- Supported: classes (fields, constructors with base-constructor chaining, single inheritance, `virtual`
+  / `override` / `abstract`, `base.` calls, `sealed`), interfaces (implicit and explicit implementation,
+  default interface methods, interface inheritance), `is` / `as` / casts, `null`, one-dimensional and jagged
+  arrays of numeric types, `bool`, `char`, enums and references, `foreach` over arrays, string literals,
+  `Length`, indexer, `==` / `!=`, `string.Concat` (2–4 strings, i.e. `+`), `string.IsNullOrEmpty`.
+- Overrides and implicit interface implementations are matched by name and CLR signature. Hiding a
+  virtual method with `new virtual` is not distinguished from overriding it.
+- Non-virtual instance calls are direct calls without a null check at the call site; a null receiver
+  traps at its first field access.
+- Not supported yet (clear build errors): structs, generics (including `List<T>`), delegates and lambdas,
+  exceptions, boxing, `ref`/`out`/`in`, multi-dimensional arrays, `System.Object` virtuals
+  (`ToString`, `Equals`, `GetHashCode`), string formatting/interpolation, and other BCL types.
+- Correctness: differential tests for virtual dispatch, interfaces, type tests, arrays, strings and linked
+  structures, plus GC tests where the only reference to a live object is in a caller's local, on a
+  caller's operand stack, or in a static array while several collections run (`HeapTests`).

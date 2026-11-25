@@ -7,8 +7,7 @@ namespace HelloSquare;
 /// stick, over a scrolling two-screen background. Space toggles the background layer,
 /// Escape exits.
 /// </summary>
-[Cartridge]
-public static class Game
+public sealed class Game : ICartridge
 {
     private const int Size = 16;
     private const int Speed = 2;
@@ -16,11 +15,11 @@ public static class Game
     private const int Markers = 1;
     private const int Sprites = 2;
 
-    private static int x = 120;
-    private static int y = 120;
-    private static int scroll;
+    private int x = 120;
+    private int y = 120;
+    private int scroll;
 
-    public static void Initialize()
+    public void Initialize()
     {
         Graphics.ResizeLayer(Background, 2, 1);
         int width = Graphics.LayerWidth(Background);
@@ -40,7 +39,7 @@ public static class Game
         Graphics.FillRect(Markers, 252, 232, 4, 24, 19);
     }
 
-    public static void Tick()
+    public void Tick()
     {
         if (Input.WasKeyPressed(Key.Escape))
         {
@@ -59,7 +58,7 @@ public static class Game
         Graphics.SetDisplayOrigin(Background, scroll / 2, 0);
     }
 
-    public static void Render()
+    public void Render()
     {
         Graphics.Clear(Sprites);
         Graphics.FillRect(Sprites, x, y, Size, Size, 11);
