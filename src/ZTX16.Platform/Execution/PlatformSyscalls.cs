@@ -1,4 +1,5 @@
 using ZTX16.Abi;
+using ZTX16.Platform.Runtime;
 using ZTX16.Platform.Graphics;
 using ZTX16.Platform.Input;
 using ZTX16.VM;
@@ -24,6 +25,7 @@ internal static class PlatformSyscalls
         Machine machine = session.Machine;
         GraphicsSystem graphics = session.Graphics;
         InputSystem input = session.Input;
+        ResourceStore resources = session.Resources;
 
         var table = new SyscallTable();
         var bound = new HashSet<string>(StringComparer.Ordinal);
@@ -91,6 +93,29 @@ internal static class PlatformSyscalls
         Bind("input.gamepad_axis", a =>
             FromF32(Pad(a[0]).GetAxis((GamepadAxis)ToI32(a[1]))));
 
+        // Resources
+        BindWithContext("resources.exists", (c, a) => FromBool(resources.Exists(Type(a[0]), Name(c, a[1]))));
+        Bind("resources.count", a => resources.Names(Type(a[0])).Count);
+        BindWithContext("resources.name", (c, a) =>
+        {
+            IReadOnlyList<string> names = resources.Names(Type(a[0]));
+            int index = ToI32(a[1]);
+            return (uint)index < (uint)names.Count
+                ? c.NewString(names[index])
+                : throw new ArgumentOutOfRangeException(nameof(index), index, $"There are {names.Count} {Type(a[0])} resources.");
+        });
+        BindWithContext("palette.use", (c, a) =>
+        {
+            string name = Name(c, a[0]);
+            ushort[] colors = resources.Palette(name) ?? throw new ArgumentException($"Palette resource '{name}' not found.");
+            for (int i = 0; i < colors.Length; i++)
+            {
+                graphics.Palette.SetColor(i, Color.FromValue(colors[i]));
+            }
+
+            return 0;
+        });
+
         string[] missing = SdkAbi.Syscalls.Keys.Where(name => !bound.Contains(name)).Order(StringComparer.Ordinal).ToArray();
         if (missing.Length > 0)
         {
@@ -99,7 +124,9 @@ internal static class PlatformSyscalls
 
         return table;
 
-        void Bind(string name, SyscallHandler handler)
+        void Bind(string name, SimpleSyscallHandler handler) => BindWithContext(name, (_, args) => handler(args));
+
+        void BindWithContext(string name, SyscallHandler handler)
         {
             if (!SdkAbi.Syscalls.TryGetValue(name, out SyscallDescriptor? descriptor))
             {
@@ -109,6 +136,14 @@ internal static class PlatformSyscalls
             table.Add(name, descriptor.Signature, handler);
             bound.Add(name);
         }
+
+        static ResourceType Type(long slot) =>
+            Enum.IsDefined((ResourceType)ToI32(slot))
+                ? (ResourceType)ToI32(slot)
+                : throw new ArgumentOutOfRangeException(nameof(slot), ToI32(slot), "Unknown resource type.");
+
+        static string Name(ISyscallContext context, long slot) =>
+            context.ReadString(slot) ?? throw new ArgumentNullException(nameof(slot), "Resource name is null.");
 
         GraphicsLayer Layer(long slot) => graphics.Layers[ToI32(slot)];
 

@@ -252,3 +252,52 @@ structs, which the VM does not support; C# 12 uses arrays.
 - Constant array initializers (`new int[] { 1, 2, 3 }`, compiled to `RuntimeHelpers.InitializeArray` with
   embedded data) are expanded into element stores.
 - Executable format version 3 (value-type flag and nested value fields per class).
+
+## Cartridge-1 — Project → Cartridge
+
+### Project
+
+- **Project Config:** `ztx16.project.json` at the project root (JSON; comments and trailing commas
+  allowed). Fields: `name`, `gameId` (lower-case letters, digits, `.`, `-`, `_`; the Storage namespace),
+  `version`, `language.name` (`csharp`), `directories` (category → relative directory).
+- **Categories:** `code` (required) and one per resource type: `palettes`, `tilemaps`, `sprites`, `fonts`,
+  `animations`, `samples`, `wavetables`, `instruments`, `sequences`, `songs`, `levels`. New projects get the
+  standard mapping (same names as directories); developers may change it.
+- Sources: every `*.cs` under the code directory (recursively). Resources: files with the type's extension
+  under its directory (recursively); the **resource name is the file name without extension**, nested
+  directories are organizational only, and duplicate names within a type are a build error.
+- Unknown files, files in unmapped directories, files with other extensions and anything under `bin/` or
+  `obj/` are ignored and never reach a cartridge. Missing directories are normal.
+- A `.csproj` may sit in the project for IDE support; it is an unrelated file to ZTX16. Importing
+  `ZTX16.Cartridge.targets` makes `dotnet build` run `ztx16c build` on the project.
+
+### Resource formats (this iteration)
+
+- **Palette:** project file `*.pal`, text, exactly 32 lines `R G B` (0..7), `#` comments, entry 0 is the
+  backdrop. Cartridge data: 32 little-endian u16 (RGB 3:3:3). Other resource types have no project format
+  yet; their directories are accepted but their files are ignored.
+
+### Cartridge file (`.ztx`)
+
+- `"ZTXC"`, u16 format version (1), then a deflate stream with: the Project Config text (verbatim), the
+  ZTX16 executable, resources (type, name, data) and the project sources (path, bytes).
+- Sources and the config are packaged so a cartridge can be **extracted back into an ordinary project**;
+  extracting and rebuilding produces the same executable (the build is deterministic).
+- Extraction refuses non-empty targets and any path that would leave the target directory.
+
+### Toolchain (`ztx16c`)
+
+- `ztx16c new <dir> [--name N] [--id ID]`, `ztx16c build <project> [-o file.ztx]` (default
+  `<project>/bin/<Name>.ztx`), `ztx16c extract <file.ztx> <dir>`, and the earlier `ztx16c <assembly.dll>`.
+- `build` compiles with **Roslyn inside the toolchain** (C# 12, nullable enabled, Release, deterministic)
+  against `System.Runtime` and `ZTX16.Sdk`, together with the core library sources shipped next to the
+  toolchain (`core/`). No `.csproj` is needed.
+- Errors are reported as `file(line,col): error …` for C# and `error ZTX0001: …` otherwise.
+
+### Runtime
+
+- The host runs a `.ztx` directly (`--exe file.ztx`); its resources become the session's `ResourceStore`.
+- SDK: `ResourceType` (ABI enum), `Resources.Exists/Count/Name` (names in ordinal order),
+  `Graphics.UsePalette(name)` (a missing palette stops the cartridge).
+- Syscalls receive an `ISyscallContext` to read string arguments and return strings; `string` is part of
+  the syscall ABI (as a reference).

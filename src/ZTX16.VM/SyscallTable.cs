@@ -2,10 +2,24 @@ namespace ZTX16.VM;
 
 /// <summary>
 /// Implementation of one syscall. Arguments arrive as raw 64-bit slots in declaration
-/// order; use <see cref="VmValue"/> to decode them. The return value is ignored for
-/// syscalls without a result.
+/// order; use <see cref="VmValue"/> to decode numbers and <paramref name="context"/> for
+/// strings. The return value is ignored for syscalls without a result.
 /// </summary>
-public delegate long SyscallHandler(ReadOnlySpan<long> args);
+public delegate long SyscallHandler(ISyscallContext context, ReadOnlySpan<long> args);
+
+/// <summary>A syscall implementation that only uses numeric arguments.</summary>
+public delegate long SimpleSyscallHandler(ReadOnlySpan<long> args);
+
+/// <summary>Access to the calling VM instance from inside a syscall.</summary>
+public interface ISyscallContext
+{
+    /// <summary>Reads a string argument (null for a null reference).</summary>
+    /// <exception cref="ArgumentException">The reference is not a string.</exception>
+    string? ReadString(long handle);
+
+    /// <summary>Allocates a string on the VM heap and returns its reference, for use as a result.</summary>
+    long NewString(string value);
+}
 
 /// <summary>Thrown when a module imports a syscall the runtime does not provide.</summary>
 public sealed class LinkException : Exception
@@ -44,6 +58,13 @@ public sealed class SyscallTable
         }
 
         return this;
+    }
+
+    /// <summary>Registers a syscall that only uses numeric arguments.</summary>
+    public SyscallTable Add(string name, VmSignature signature, SimpleSyscallHandler handler)
+    {
+        ArgumentNullException.ThrowIfNull(handler);
+        return Add(name, signature, (_, args) => handler(args));
     }
 
     /// <summary>Resolves an import against this table.</summary>

@@ -34,7 +34,7 @@ public sealed class VmTrapException : Exception
 /// a callee's parameters are the caller's top operands, so arguments are never copied.
 /// All values are raw 64-bit slots; the verifier guarantees their types.
 /// </remarks>
-public sealed class VmInstance
+public sealed class VmInstance : ISyscallContext
 {
     /// <summary>Maximum nesting of calls. Provisional implementation limit.</summary>
     public const int MaxCallDepth = 256;
@@ -57,6 +57,8 @@ public sealed class VmInstance
     private readonly int[] _frameResumePc = new int[MaxCallDepth + 2];
     private readonly long[] _frameConstructed = new long[MaxCallDepth + 2];
     private readonly List<long> _temporaryRoots = [];
+    private VmFunction? _syscallFunction;
+    private int _syscallOffset;
     private long _budget = long.MaxValue;
     private int _depth;
 
@@ -822,7 +824,9 @@ public sealed class VmInstance
                         long result;
                         try
                         {
-                            result = _syscalls[index](new ReadOnlySpan<long>(s, argBase, argCount));
+                            _syscallFunction = function;
+                            _syscallOffset = start;
+                            result = _syscalls[index](this, new ReadOnlySpan<long>(s, argBase, argCount));
                         }
                         catch (Exception e) when (e is not VmTrapException)
                         {
@@ -882,6 +886,28 @@ public sealed class VmInstance
     }
 
     // ---- heap ---------------------------------------------------------------------------
+
+    // ---- syscall context ------------------------------------------------------------------
+
+    /// <inheritdoc />
+    string? ISyscallContext.ReadString(long handle)
+    {
+        if (handle == 0)
+        {
+            return null;
+        }
+
+        return _heap.Get(handle) is StringObject s ? s.Value : throw new ArgumentException("Argument is not a string.");
+    }
+
+    /// <inheritdoc />
+    long ISyscallContext.NewString(string value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+
+        // A syscall is a safepoint: its arguments are rooted by the stack map, so collecting here is safe.
+        return Allocate(new StringObject(value), _syscallFunction ?? _functions[0], _syscallOffset);
+    }
 
     // ---- value types and pointers ---------------------------------------------------------
 

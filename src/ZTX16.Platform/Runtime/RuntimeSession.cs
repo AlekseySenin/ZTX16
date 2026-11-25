@@ -14,11 +14,12 @@ public sealed class RuntimeSession
     private bool _initialized;
     private bool _deinitialized;
 
-    internal RuntimeSession(IRuntimeProgram program, int audioSampleRate)
+    internal RuntimeSession(IRuntimeProgram program, int audioSampleRate, ResourceStore? resources = null)
     {
         ArgumentNullException.ThrowIfNull(program);
         _program = program;
         Audio = new AudioEngine(audioSampleRate);
+        Resources = resources ?? ResourceStore.Empty;
     }
 
     /// <summary>Machine API.</summary>
@@ -32,6 +33,9 @@ public sealed class RuntimeSession
 
     /// <summary>Audio hardware.</summary>
     public AudioEngine Audio { get; }
+
+    /// <summary>Resources of the running cartridge.</summary>
+    public ResourceStore Resources { get; }
 
     /// <summary>True once the program requested exit.</summary>
     internal bool ShouldExit => Machine.ExitRequested;

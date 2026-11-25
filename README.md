@@ -14,23 +14,32 @@ dotnet build ZTX16.sln
 dotnet test ZTX16.sln
 ```
 
-## Write and run a C# cartridge
+## Make and run a cartridge
 
-Cartridges are ordinary C# compiled against `ZTX16.Sdk`, then translated by `ztx16c` into a ZTX16 executable (`.ztxe`) that runs in the ZTX16 VM. See [samples/HelloSquare](samples/HelloSquare/Game.cs).
+A ZTX16 Project is a directory with `ztx16.project.json`, C# code in `code/` and resources such as palettes in `palettes/`. `ztx16c` compiles the code, translates it for the ZTX16 VM and packs everything into one cartridge file (`.ztx`), which can also be extracted back into a project. See [samples/HelloSquare](samples/HelloSquare/code/Game.cs).
+
+```
+dotnet run --project src/ZTX16.Toolchain -- new MyGame
+dotnet run --project src/ZTX16.Toolchain -- build MyGame          # → MyGame/bin/MyGame.ztx
+dotnet run --project src/ZTX16.Host -- --exe MyGame/bin/MyGame.ztx
+dotnet run --project src/ZTX16.Toolchain -- extract MyGame/bin/MyGame.ztx MyGameCopy
+```
+
+The sample also has a `.csproj` for IDE support; `dotnet build` on it builds the cartridge:
 
 ```
 dotnet build samples/HelloSquare
-dotnet run --project src/ZTX16.Host -- --exe samples/HelloSquare/bin/Debug/net10.0/HelloSquare.ztxe
+dotnet run --project src/ZTX16.Host -- --exe samples/HelloSquare/bin/Debug/net10.0/HelloSquare.ztx
 ```
 
-HelloSquare: arrows / WASD / D-pad / left stick move the square, Space toggles the scrolling background, Escape exits.
+HelloSquare: arrows / WASD / D-pad / left stick move the square, Space toggles the scrolling background, P cycles palettes, Escape exits.
 
 A cartridge is one class implementing `ZTX16.ICartridge` (`Initialize`, `Tick`, `Render`, optional `Deinitialize`). The toolchain supports numeric types, `bool`, `char`, enums, classes with inheritance and virtual methods, interfaces, generics, structs, arrays, strings (including `ToString()` of numbers) and null, on a garbage-collected heap. Collections come from `ZTX16.Collections` (`List<T>`, `Dictionary<K,V>`, `HashSet<T>`, `Stack<T>`, `Queue<T>`). Structs (with value semantics) and `ref`/`out`/`in` parameters are supported. Lambdas, exceptions, boxing, `int?` and tuples are not supported yet and are reported as build errors.
 
 ## Host options
 
 ```
-dotnet run --project src/ZTX16.Host -- [--scale 1..8] [--fullscreen] [--exe <file.ztxe> | --vm-demo]
+dotnet run --project src/ZTX16.Host -- [--scale 1..8] [--fullscreen] [--exe <file.ztx | file.ztxe> | --vm-demo]
 ```
 
 Without `--exe` the host runs its built-in diagnostic program; `--vm-demo` runs a hand-assembled bytecode demo.
@@ -49,7 +58,8 @@ Diagnostic program: arrows / WASD / D-pad / left stick move the square (its heig
 - `src/ZTX16.Abi` — reads the ABI from the SDK for runtime and toolchain.
 - `src/ZTX16.Platform` — runtime subsystems (`ZTX16.Platform.*`); no host dependencies.
 - `src/ZTX16.Core` — core library (`ZTX16.Collections`), compiled into every cartridge as source.
-- `src/ZTX16.Toolchain` — `ztx16c`, IL → ZTX16 translator, and cartridge build targets.
+- `src/ZTX16.Cartridge` — Project Config, project discovery, resource formats, cartridge file, extraction.
+- `src/ZTX16.Toolchain` — `ztx16c` (new / build / extract / translate), IL → ZTX16 translator, cartridge build targets.
 - `src/ZTX16.Host` — SDL3 reference host.
 - `samples/` — example cartridges.
 - `tests/ZTX16.Tests` — unit, VM, toolchain and differential tests.

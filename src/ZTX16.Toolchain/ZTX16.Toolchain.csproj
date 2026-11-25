@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- Toolchain: translates a compiled cartridge IL assembly into a ZTX16 executable.
-       The IL assembly is an intermediate artifact; it never ships and never runs. -->
+  <!-- Toolchain (ztx16c): builds Projects into cartridges (C# → IL with Roslyn → ZTX16 executable),
+       extracts cartridges, creates projects, and translates IL assemblies. The IL assembly is an
+       intermediate artifact; it never ships and never runs. -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <RootNamespace>ZTX16.Toolchain</RootNamespace>
@@ -8,6 +9,16 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.12.0" />
+    <InternalsVisibleTo Include="ZTX16.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\ZTX16.Abi\ZTX16.Abi.csproj" />
+    <ProjectReference Include="..\ZTX16.Cartridge\ZTX16.Cartridge.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The core library ships with the toolchain as source and is compiled into every cartridge. -->
+    <None Include="..\ZTX16.Core\**\*.cs" Exclude="..\ZTX16.Core\obj\**;..\ZTX16.Core\bin\**"
+          Link="core\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

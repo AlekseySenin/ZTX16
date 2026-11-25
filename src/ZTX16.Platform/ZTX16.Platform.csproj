@@ -12,5 +12,6 @@
     <ProjectReference Include="..\ZTX16.VM\ZTX16.VM.csproj" />
     <ProjectReference Include="..\ZTX16.Sdk\ZTX16.Sdk.csproj" />
     <ProjectReference Include="..\ZTX16.Abi\ZTX16.Abi.csproj" />
+    <ProjectReference Include="..\ZTX16.Cartridge\ZTX16.Cartridge.csproj" />
   </ItemGroup>
 </Project>

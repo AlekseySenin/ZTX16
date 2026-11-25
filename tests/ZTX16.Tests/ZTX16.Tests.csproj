@@ -16,5 +16,6 @@
     <ProjectReference Include="..\..\src\ZTX16.Platform\ZTX16.Platform.csproj" />
     <ProjectReference Include="..\..\src\ZTX16.VM\ZTX16.VM.csproj" />
     <ProjectReference Include="..\..\src\ZTX16.Toolchain\ZTX16.Toolchain.csproj" />
+    <ProjectReference Include="..\..\src\ZTX16.Cartridge\ZTX16.Cartridge.csproj" />
   </ItemGroup>
 </Project>

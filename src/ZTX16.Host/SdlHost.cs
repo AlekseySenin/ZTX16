@@ -42,11 +42,11 @@ internal sealed unsafe class SdlHost : IDisposable
     }
 
     /// <summary>Runs <paramref name="program"/> until it exits or the window closes. Returns the process exit code.</summary>
-    public int Run(IRuntimeProgram program)
+    public int Run(IRuntimeProgram program, ResourceStore? resources = null)
     {
         CreateWindowAndRenderer();
 
-        var session = new RuntimeSession(program, AudioSampleRate);
+        var session = new RuntimeSession(program, AudioSampleRate, resources);
         _input = new SdlInputTranslator(session.Input);
         _audio = new SdlAudioOutput(session.Audio);
 

@@ -428,7 +428,7 @@ public class SampleCartridgeTests
             root = Path.GetDirectoryName(root) ?? throw new InvalidOperationException("Repository root not found.");
         }
 
-        string source = File.ReadAllText(Path.Combine(root, "samples", "HelloSquare", "Game.cs"));
+        string source = File.ReadAllText(Path.Combine(root, "samples", "HelloSquare", "code", "Game.cs"));
         RuntimeSession session = CartridgeCompiler.Start(source, optimize: true);
 
         session.Input.Enqueue(Platform.Input.InputEvent.KeyChange(Key.Left, true));

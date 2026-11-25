@@ -6,7 +6,7 @@ namespace HelloSquare;
 /// <summary>
 /// First C# cartridge: a square moved with the arrow keys, WASD, the D-pad or the left
 /// stick, over a scrolling two-screen background, leaving a trail kept in a Queue. Space toggles the background layer,
-/// Escape exits.
+/// P cycles through the Palette resources of the cartridge, Escape exits.
 /// </summary>
 public sealed class Game : ICartridge
 {
@@ -21,9 +21,15 @@ public sealed class Game : ICartridge
     private int scroll;
     private const int TrailLength = 12;
     private readonly Queue<int> trail = new();
+    private int palette;
 
     public void Initialize()
     {
+        if (Resources.Exists(ResourceType.Palette, "default"))
+        {
+            Graphics.UsePalette("default");
+        }
+
         Graphics.ResizeLayer(Background, 2, 1);
         int width = Graphics.LayerWidth(Background);
         for (int cellY = 0; cellY < Graphics.ScreenSize / 32; cellY++)
@@ -52,6 +58,13 @@ public sealed class Game : ICartridge
         if (Input.WasKeyPressed(Key.Space))
         {
             Graphics.SetDisplayEnabled(Background, !Graphics.IsDisplayEnabled(Background));
+        }
+
+        int palettes = Resources.Count(ResourceType.Palette);
+        if (Input.WasKeyPressed(Key.P) && palettes > 0)
+        {
+            palette = (palette + 1) % palettes;
+            Graphics.UsePalette(Resources.Name(ResourceType.Palette, palette));
         }
 
         x = Clamp(x + Horizontal() * Speed, 0, Graphics.ScreenSize - Size);

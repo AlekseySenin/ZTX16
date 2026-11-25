@@ -81,6 +81,10 @@ public static class Graphics
     [Syscall("display.is_enabled")]
     public static bool IsDisplayEnabled(int layer) => throw new NotInVmException();
 
+    /// <summary>Replaces the whole palette with the Palette resource <paramref name="name"/>; stops the cartridge if it does not exist.</summary>
+    [Syscall("palette.use")]
+    public static void UsePalette(string name) => throw new NotInVmException();
+
     /// <summary>Sets a palette entry from RGB components 0..7.</summary>
     [Syscall("palette.set_color")]
     public static void SetPaletteColor(int index, int r, int g, int b) => throw new NotInVmException();
@@ -145,4 +149,58 @@ public static class Input
     /// <summary>Raw axis value: sticks -1..1 (+Y up), triggers 0..1.</summary>
     [Syscall("input.gamepad_axis")]
     public static float GetGamepadAxis(int slot, GamepadAxis axis) => throw new NotInVmException();
+}
+
+/// <summary>Resource families stored in a cartridge.</summary>
+/// <remarks>Numeric values are executable ABI: append members only, never reorder.</remarks>
+public enum ResourceType
+{
+    /// <summary>32-entry color palette.</summary>
+    Palette = 1,
+
+    /// <summary>32×32-tile bitmap.</summary>
+    Tilemap = 2,
+
+    /// <summary>Composition of tiles.</summary>
+    Sprite = 3,
+
+    /// <summary>Bitmap font.</summary>
+    Font = 4,
+
+    /// <summary>Tile-swap animation.</summary>
+    Animation = 5,
+
+    /// <summary>PCM sample.</summary>
+    Sample = 6,
+
+    /// <summary>64-sample wavetable.</summary>
+    Wavetable = 7,
+
+    /// <summary>Instrument definition.</summary>
+    Instrument = 8,
+
+    /// <summary>Monophonic sequence.</summary>
+    Sequence = 9,
+
+    /// <summary>Song.</summary>
+    Song = 10,
+
+    /// <summary>Level.</summary>
+    Level = 11,
+}
+
+/// <summary>Read-only access to the resources packaged in the cartridge, addressed by type and name.</summary>
+public static class Resources
+{
+    /// <summary>True if a resource of <paramref name="type"/> named <paramref name="name"/> exists.</summary>
+    [Syscall("resources.exists")]
+    public static bool Exists(ResourceType type, string name) => throw new NotInVmException();
+
+    /// <summary>Number of resources of <paramref name="type"/>.</summary>
+    [Syscall("resources.count")]
+    public static int Count(ResourceType type) => throw new NotInVmException();
+
+    /// <summary>Name of resource <paramref name="index"/> (0..Count-1) of <paramref name="type"/>, in name order.</summary>
+    [Syscall("resources.name")]
+    public static string Name(ResourceType type, int index) => throw new NotInVmException();
 }

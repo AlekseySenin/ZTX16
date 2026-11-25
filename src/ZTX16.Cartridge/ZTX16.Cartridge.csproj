@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Project and cartridge formats: Project Config, project discovery, resource codecs, the packed
+       cartridge file and extraction. Shared by the toolchain (build/extract) and the runtime (load). -->
+  <PropertyGroup>
+    <RootNamespace>ZTX16.Cartridge</RootNamespace>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="ZTX16.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ZTX16.Sdk\ZTX16.Sdk.csproj" />
+  </ItemGroup>
+</Project>

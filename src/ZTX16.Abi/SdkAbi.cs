@@ -54,6 +54,7 @@ public static class SdkAbi
             TypeCode.Int64 or TypeCode.UInt64 => VmType.I64,
             TypeCode.Single => VmType.F32,
             TypeCode.Double => VmType.F64,
+            TypeCode.String => VmType.Ref,
             _ => throw new NotSupportedException($"Type '{type}' has no ZTX16 VM representation."),
         };
     }

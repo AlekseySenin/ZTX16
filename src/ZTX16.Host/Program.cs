@@ -4,20 +4,25 @@ using ZTX16.Host;
 using ZTX16.Host.Diagnostics;
 using ZTX16.Platform.Runtime;
 using ZTX16.VM;
+using ZTX16.Cartridge;
 
 HostOptions options;
 IRuntimeProgram program;
+ResourceStore? resources = null;
 try
 {
     options = HostOptions.Parse(args);
     program = options.Program switch
     {
         HostProgram.VmDemo => VmProgram.Load(VmDemoCartridge.BuildExecutable()),
-        HostProgram.Executable => VmProgram.Load(File.ReadAllBytes(options.ExecutablePath!)),
+        HostProgram.Executable when options.ExecutablePath!.EndsWith(CartridgeFile.Extension, StringComparison.OrdinalIgnoreCase)
+            => LoadCartridge(options.ExecutablePath, out resources),
+        HostProgram.Executable => VmProgram.Load(File.ReadAllBytes(options.ExecutablePath)),
         _ => new DiagnosticProgram(),
     };
 }
-catch (Exception e) when (e is ArgumentException or IOException or ExecutableFormatException or VerificationException)
+catch (Exception e) when (e is ArgumentException or IOException or ExecutableFormatException or VerificationException
+    or CartridgeFormatException or ProjectException)
 {
     Console.Error.WriteLine($"ZTX16: {e.Message}");
     return 2;
@@ -26,13 +31,21 @@ catch (Exception e) when (e is ArgumentException or IOException or ExecutableFor
 using var host = new SdlHost(options);
 try
 {
-    return host.Run(program);
+    return host.Run(program, resources);
 }
 catch (Exception e) when (e is VmTrapException or LinkException)
 {
     // Unhandled cartridge failure: the session ends without Deinitialize.
     Console.Error.WriteLine($"ZTX16: cartridge failed: {e.Message}");
     return 1;
+}
+
+// Loads a packed cartridge: the executable runs in the VM, the resources go to the session.
+static IRuntimeProgram LoadCartridge(string path, out ResourceStore? resources)
+{
+    CartridgeContent cartridge = CartridgeFile.Read(File.ReadAllBytes(path));
+    resources = new ResourceStore(cartridge.Resources);
+    return VmProgram.Load(cartridge.Executable);
 }
 
 namespace ZTX16.Host
@@ -56,7 +69,7 @@ namespace ZTX16.Host
         public const int MinScale = 1;
         public const int MaxScale = 8;
 
-        private const string Usage = "Usage: [--scale N] [--fullscreen] [--vm-demo | --exe <file>]";
+        private const string Usage = "Usage: [--scale N] [--fullscreen] [--vm-demo | --exe <file.ztx | file.ztxe>]";
 
         public static HostOptions Parse(string[] args)
         {
