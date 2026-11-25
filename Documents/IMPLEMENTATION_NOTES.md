@@ -27,13 +27,8 @@ forwarded to the session.
 
 ### Graphics
 
-- **Backdrop color.** Where every enabled Display Layer is transparent, the display shows the color
-  stored at palette entry 0. Entry 0 is otherwise never visible, because ColorIndex 0 is transparent
-  in layers. (`GraphicsSystem.ConvertToArgb`)
-- **Display window wrapping.** A Display Layer's 256×256 window wraps around the edges of its
-  Graphics Layer, so any origin is valid. (`GraphicsSystem.Compose`)
-- **Display origin state.** The window origin (`OriginX`/`OriginY`) and `Enabled` live on
-  `DisplayLayer`, not on `GraphicsLayer`. A Graphics Layer stays a pure raster buffer.
+- Backdrop color, Display window wrapping and Display origin state were decided in this phase and are
+  now specified in `02_Graphics.md` (Display Layers, Composition).
 - **Layer size limit.** Provisionally 1–8 screens per axis (`GraphicsLayer.MaxScreensPerAxis`). This
   is an implementation constant, not a machine-profile guarantee.
 - **Default layer size.** 1×1 screen.

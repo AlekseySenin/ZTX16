@@ -60,9 +60,15 @@ Cartridge does not observe suspend/resume system events.
 
 ## Editor invariant
 
-Editors are ordinary ZTX16 applications using real ZTX16 resources.
+Editors are ZTX16 applications using real ZTX16 resources.
+
+Authoring tools hold explicit additional capabilities (project import/export, authoring storage) that a running Cartridge never receives (`18_Sandbox_and_Security.md` §9). These capabilities are explicit, named platform services, not ad-hoc host dependencies.
 
 The editor environment must not become a hidden runtime dependency.
+
+## Execution invariant
+
+Cartridge code runs only as ZTX16 executable code inside the VM. Its only access to the machine is the VM syscall table; anything not in that table does not exist for the cartridge.
 
 ## Project invariant
 

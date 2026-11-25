@@ -91,7 +91,7 @@ Do not call entries “files” in the public API. Use Storage Entry or Save Ent
 
 `ZTX16.DeterministicRandom` is the platform deterministic PRNG.
 
-It is distinct from `.NET System.Random`.
+It is the only platform randomness available to cartridge code. `.NET System.Random` belongs to host/toolchain code and is not part of the cartridge execution contract.
 
 Seed is supplied when the generator is created.
 

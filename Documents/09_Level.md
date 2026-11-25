@@ -16,6 +16,7 @@ Each logical Level Visual Layer has:
 
 - its own Tilemap reference;
 - its own logical ordering/indexing;
+- its own dimensions, a whole multiple of 256×256 pixels, set in the Level Editor;
 - a collection of Actors.
 
 The number of logical Level Layers is not limited to eight.
@@ -28,17 +29,18 @@ Actor has:
 
 - unique game-defined ID;
 - Transform;
-- exactly one Visual Representation;
-- Collider state/reference.
+- at most one Visual Representation;
+- optional Collider state/reference.
 
 Actor has no predefined semantic type such as Player, Enemy or Door.
 
-Transform conceptually contains:
+Transform conceptually contains the same per-draw transform as Graphics:
 
-- position;
+- position (integer; the object origin);
+- FlipX / FlipY;
 - scale;
 - rotation;
-- pivot.
+- pivot (default lower-left).
 
 ## Visual Representation
 
@@ -83,6 +85,10 @@ Game code can obtain actors belonging to a logical layer, find actors by ID and 
 Level may rasterize logical Level Layers into any physical Graphics Layer.
 
 Multiple logical Level Layers may be rasterized sequentially into one physical Graphics Layer.
+
+Rasterization accepts an offset into the target Graphics Layer and is clipped to its bounds. If the source Level Layer is larger than the target, the excess is clipped and a warning is produced.
+
+Scrolling is done by moving the Display Layer origin over a large Graphics Layer, or by re-rasterizing with a different offset.
 
 Graphics remains unaware of Level concepts.
 

@@ -76,7 +76,7 @@ Do not silently clamp or ignore invalid values unless the specification explicit
 
 Editors are ZTX16 applications.
 
-Do not create privileged desktop-only dependencies merely to make an editor easier to implement.
+Authoring tools may use the explicit authoring capabilities defined in `18_Sandbox_and_Security.md` §9. Do not create other privileged desktop-only dependencies merely to make an editor easier to implement.
 
 Exact editor UI is intentionally left to implementation. Preserve the conceptual division of tools defined in `11_Editor_Environment.md`.
 
@@ -108,7 +108,7 @@ C# is the first/reference implementation language.
 
 The platform architecture must not be unnecessarily coupled to C#-specific concepts where a language-independent contract is intended.
 
-The initial implementation may use .NET 8+ and Roslyn/toolchain facilities where appropriate. Roslyn is a build/toolchain concern, not a requirement that the runtime ship Roslyn.
+The implementation uses .NET 10 for the host, runtime and toolchain. Roslyn is a build/toolchain concern, not a requirement that the runtime ship Roslyn. Cartridge code is compiled to the ZTX16 executable format and never runs as a .NET Assembly (`17_Cartridge_Execution_and_VM.md`).
 
 ## Documentation synchronization
 
@@ -124,7 +124,9 @@ When replacing an obsolete concept, remove or clearly archive the old implementa
 - No DeltaTime.
 - No catch-up.
 - Lower-left coordinate origin everywhere.
-- Eight physical Graphics Layers are raster buffers.
+- Integer runtime coordinates; default Pivot is lower-left.
+- Eight physical Graphics Layers are raster buffers sized in 256×256 screens.
+- Eight Display Layers show 256×256 windows of their Graphics Layers.
 - Logical Level Layers are independent and unlimited by physical layer count.
 - Collision has no static Collision Map and no Group/Mask model.
 - Input has no Player abstraction.
@@ -133,6 +135,7 @@ When replacing an obsolete concept, remove or clearly archive the old implementa
 - Project Config controls directory/resource mapping.
 - Cartridge is packed/self-contained and can be extracted back into a Project.
 - Editors run inside ZTX16.
+- Cartridges run in the ZTX16 VM behind the syscall table; no host API access.
 
 ## What belongs in implementation rather than architecture
 

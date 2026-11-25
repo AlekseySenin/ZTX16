@@ -120,3 +120,43 @@ The MVP should implement the ZTX16 executable and VM directly rather than using 
 C#/.NET remains the implementation environment for the host, runtime and initial toolchain where practical.
 
 The first C# compiler path may initially support only the language/runtime subset required to demonstrate the ZTX16 platform. This subset must not be mistaken for a permanent restriction on the ZTX16 executable format.
+
+## 11. Approved MVP execution decisions
+
+Approved November 2026.
+
+### Compilation path
+
+**C# source → Roslyn → IL assembly → ZTX16 translator → ZTX16 executable**
+
+Roslyn performs parsing and type checking. The resulting IL assembly is an intermediate toolchain artifact only; it is never shipped in a Cartridge and never executed by the runtime. The translator accepts a defined subset of IL and rejects anything outside it with a build error.
+
+Other source languages may target the ZTX16 executable directly without going through IL.
+
+### VM model
+
+- Stack-based VM. Its instruction set is designed for ZTX16, but stays close enough to IL that translation is mostly direct.
+- Bytecode is verified at load time: stack balance, types of locals and arguments, branch targets, call targets. A cartridge that fails verification does not start.
+- Managed heap with a tracing garbage collector (simple mark-sweep in the MVP). Heap size is bounded by the machine profile.
+- Value types (structs) are supported in addition to reference types.
+
+### Platform API binding
+
+- Cartridge code reaches the machine only through a **syscall table**: numbered platform operations implemented by the runtime.
+- The platform API is described once. From that description the toolchain generates both the C# SDK stubs that cartridge code compiles against and the VM-side bindings.
+- The syscall table is the sandbox boundary: an operation that is not in the table does not exist for the cartridge.
+- Platform APIs called from the VM should be coarse-grained (draw a sprite, a tile region or a rectangle) rather than per-pixel, so that hot loops run natively in the runtime.
+
+### Initial C# subset
+
+First iteration:
+
+- `int`, `long`, `float`, `double`, `bool`, `char`, enums;
+- arithmetic, comparison, logic, control flow;
+- static and instance methods, fields, properties;
+- structs, classes, single inheritance, virtual methods, interfaces;
+- one-dimensional arrays, strings.
+
+Planned next iterations, in rough order: generics and core collections (`List<T>`, `Dictionary<TKey,TValue>`), delegates and lambdas, exceptions, a minimal standard library.
+
+Not planned for the MVP: reflection, `unsafe` code, P/Invoke, threads, `async`/`await`, LINQ, `dynamic`.

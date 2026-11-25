@@ -127,7 +127,7 @@ Persistent writable storage isolated by current Game ID namespace.
 
 ### Random
 
-`ZTX16.DeterministicRandom` provides the platform deterministic PRNG; .NET `System.Random` remains ordinary .NET randomness.
+`ZTX16.DeterministicRandom` provides the platform deterministic PRNG. Cartridge code runs in the ZTX16 VM, not on .NET, so .NET `System.Random` is not available to cartridges; it may still be used by host and toolchain code.
 
 ## 9. API layering rule
 
