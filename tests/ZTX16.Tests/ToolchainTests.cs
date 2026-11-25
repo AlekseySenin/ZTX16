@@ -12,13 +12,20 @@ namespace ZTX16.Tests;
 /// <summary>Compiles C# with Roslyn and runs the result through the ZTX16 toolchain.</summary>
 internal static class CartridgeCompiler
 {
+    // Same language version as the cartridge build targets.
+    private static readonly CSharpParseOptions ParseOptions = new(LanguageVersion.CSharp12);
     private static readonly MetadataReference[] References = BuildReferences();
+    private static readonly SyntaxTree[] CoreLibrary = LoadCoreLibrary();
+
+    /// <summary>Repository root (the directory containing ZTX16.sln).</summary>
+    public static string RepositoryRoot { get; } = FindRepositoryRoot();
 
     public static byte[] Compile(string source, bool optimize)
     {
+        // Like the cartridge build targets: the core library source is compiled into the cartridge.
         CSharpCompilation compilation = CSharpCompilation.Create(
             "TestCartridge",
-            [CSharpSyntaxTree.ParseText(source)],
+            [CSharpSyntaxTree.ParseText(source, ParseOptions), .. CoreLibrary],
             References,
             new CSharpCompilationOptions(
                 OutputKind.DynamicallyLinkedLibrary,
@@ -42,6 +49,27 @@ internal static class CartridgeCompiler
         var session = new RuntimeSession(VmProgram.FromModule(Translate(source, optimize)), 48000);
         session.Initialize();
         return session;
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        string root = AppContext.BaseDirectory;
+        while (!File.Exists(Path.Combine(root, "ZTX16.sln")))
+        {
+            root = Path.GetDirectoryName(root) ?? throw new InvalidOperationException("Repository root not found.");
+        }
+
+        return root;
+    }
+
+    private static SyntaxTree[] LoadCoreLibrary()
+    {
+        string core = Path.Combine(FindRepositoryRoot(), "src", "ZTX16.Core");
+        return Directory.EnumerateFiles(core, "*.cs", SearchOption.AllDirectories)
+            .Where(p => !p.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+                && !p.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            .Select(p => CSharpSyntaxTree.ParseText(File.ReadAllText(p), ParseOptions, path: p))
+            .ToArray();
     }
 
     private static MetadataReference[] BuildReferences()

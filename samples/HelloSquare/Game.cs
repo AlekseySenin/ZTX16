@@ -1,10 +1,11 @@
 using ZTX16;
+using ZTX16.Collections;
 
 namespace HelloSquare;
 
 /// <summary>
 /// First C# cartridge: a square moved with the arrow keys, WASD, the D-pad or the left
-/// stick, over a scrolling two-screen background. Space toggles the background layer,
+/// stick, over a scrolling two-screen background, leaving a trail kept in a Queue. Space toggles the background layer,
 /// Escape exits.
 /// </summary>
 public sealed class Game : ICartridge
@@ -18,6 +19,8 @@ public sealed class Game : ICartridge
     private int x = 120;
     private int y = 120;
     private int scroll;
+    private const int TrailLength = 12;
+    private readonly Queue<int> trail = new();
 
     public void Initialize()
     {
@@ -56,11 +59,31 @@ public sealed class Game : ICartridge
 
         scroll++;
         Graphics.SetDisplayOrigin(Background, scroll / 2, 0);
+
+        // Remember the last positions (every fourth tick) for the trail.
+        if (scroll % 4 == 0)
+        {
+            trail.Enqueue(y * Graphics.ScreenSize + x);
+            if (trail.Count > TrailLength)
+            {
+                trail.Dequeue();
+            }
+        }
     }
 
     public void Render()
     {
         Graphics.Clear(Sprites);
+        int age = 0;
+        for (int i = 0; i < trail.Count; i++)
+        {
+            int packed = trail.Dequeue();
+            trail.Enqueue(packed);
+            int size = 2 + age / 2;
+            Graphics.FillRect(Sprites, packed % Graphics.ScreenSize + (Size - size) / 2, packed / Graphics.ScreenSize + (Size - size) / 2, size, size, 12);
+            age++;
+        }
+
         Graphics.FillRect(Sprites, x, y, Size, Size, 11);
         Graphics.FillRect(Sprites, x + 4, y + 4, Size - 8, Size - 8, 22);
     }

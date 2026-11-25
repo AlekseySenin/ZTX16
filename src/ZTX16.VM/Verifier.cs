@@ -273,7 +273,7 @@ public static class Verifier
 
         /// <summary>Instructions at which the garbage collector may run or which leave this frame.</summary>
         public static bool IsSafepoint(OpCode op) => op is OpCode.Call or OpCode.CallVirtual or OpCode.Syscall
-            or OpCode.New or OpCode.NewArray or OpCode.StringConcat;
+            or OpCode.New or OpCode.NewArray or OpCode.StringConcat or OpCode.StringConcatArray or OpCode.ToText;
 
         public VerificationException Fail(int offset, string message) =>
             new($"Function '{_function.Name}' at offset {offset}: {message}.");
@@ -410,8 +410,35 @@ public static class Verifier
                     s.Push(VmType.Ref);
                     return true;
 
+                case OpCode.Hash:
+                    if (!VmTypes.IsDefined((VmType)operand) || operand > byte.MaxValue)
+                    {
+                        throw Fail(offset, $"invalid hash type {operand}");
+                    }
+
+                    s.Pop((VmType)operand);
+                    s.Push(VmType.I32);
+                    return true;
+
+                case OpCode.Trap:
+                    s.Pop(VmType.Ref);
+                    return true;
+
+                case OpCode.ToText:
+                    s.Pop((VmFormatKind)operand switch
+                    {
+                        VmFormatKind.Int32 or VmFormatKind.UInt32 or VmFormatKind.Char or VmFormatKind.Boolean => VmType.I32,
+                        VmFormatKind.Int64 or VmFormatKind.UInt64 => VmType.I64,
+                        VmFormatKind.Single => VmType.F32,
+                        VmFormatKind.Double => VmType.F64,
+                        _ => throw Fail(offset, $"invalid format kind {operand}"),
+                    });
+                    s.Push(VmType.Ref);
+                    return true;
+
                 case OpCode.EqRef:
                 case OpCode.StringEquals:
+                case OpCode.ValueEquals:
                     s.Pop(VmType.Ref);
                     s.Pop(VmType.Ref);
                     s.Push(VmType.I32);
@@ -502,6 +529,11 @@ public static class Verifier
                 case OpCode.StringLength:
                     s.Pop(VmType.Ref);
                     s.Push(VmType.I32);
+                    return true;
+
+                case OpCode.StringConcatArray:
+                    s.Pop(VmType.Ref);
+                    s.Push(VmType.Ref);
                     return true;
 
                 case OpCode.LoadString:

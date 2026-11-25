@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- ZTX16 core library (collections). Shipped as source: the cartridge build compiles these files
+       into every cartridge, so they are translated together with cartridge code. This project
+       exists so the library is compiled and analyzed on its own as well. -->
+  <PropertyGroup>
+    <RootNamespace>ZTX16</RootNamespace>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+</Project>

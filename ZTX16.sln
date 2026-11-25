@@ -25,6 +25,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "samples", "samples", "{5D20
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HelloSquare", "samples\HelloSquare\HelloSquare.csproj", "{D415214B-C3BC-4037-B4A6-98A6687A454A}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ZTX16.Core", "src\ZTX16.Core\ZTX16.Core.csproj", "{72FEB551-DE26-4142-A895-A4166D1B8AED}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -131,6 +133,18 @@ Global
 		{D415214B-C3BC-4037-B4A6-98A6687A454A}.Release|x64.Build.0 = Release|Any CPU
 		{D415214B-C3BC-4037-B4A6-98A6687A454A}.Release|x86.ActiveCfg = Release|Any CPU
 		{D415214B-C3BC-4037-B4A6-98A6687A454A}.Release|x86.Build.0 = Release|Any CPU
+		{72FEB551-DE26-4142-A895-A4166D1B8AED}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{72FEB551-DE26-4142-A895-A4166D1B8AED}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{72FEB551-DE26-4142-A895-A4166D1B8AED}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{72FEB551-DE26-4142-A895-A4166D1B8AED}.Debug|x64.Build.0 = Debug|Any CPU
+		{72FEB551-DE26-4142-A895-A4166D1B8AED}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{72FEB551-DE26-4142-A895-A4166D1B8AED}.Debug|x86.Build.0 = Debug|Any CPU
+		{72FEB551-DE26-4142-A895-A4166D1B8AED}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{72FEB551-DE26-4142-A895-A4166D1B8AED}.Release|Any CPU.Build.0 = Release|Any CPU
+		{72FEB551-DE26-4142-A895-A4166D1B8AED}.Release|x64.ActiveCfg = Release|Any CPU
+		{72FEB551-DE26-4142-A895-A4166D1B8AED}.Release|x64.Build.0 = Release|Any CPU
+		{72FEB551-DE26-4142-A895-A4166D1B8AED}.Release|x86.ActiveCfg = Release|Any CPU
+		{72FEB551-DE26-4142-A895-A4166D1B8AED}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

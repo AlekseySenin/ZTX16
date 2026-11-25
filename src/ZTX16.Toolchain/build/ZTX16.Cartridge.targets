@@ -4,9 +4,16 @@
        The IL assembly is an intermediate artifact only. -->
   <PropertyGroup>
     <ZTX16Root>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)', '..', '..', '..'))</ZTX16Root>
+    <!-- C# 13+ binds BCL calls such as string.Concat with many parts to 'params ReadOnlySpan'
+         overloads built on inline-array structs, which the VM does not support. C# 12 uses arrays. -->
+    <LangVersion>12</LangVersion>
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- The core library (ZTX16.Collections, …) ships as source and is translated with the cartridge. -->
+    <Compile Include="$(ZTX16Root)src/ZTX16.Core/**/*.cs"
+             Exclude="$(ZTX16Root)src/ZTX16.Core/obj/**;$(ZTX16Root)src/ZTX16.Core/bin/**"
+             Link="ZTX16.Core/%(RecursiveDir)%(Filename)%(Extension)" />
     <ProjectReference Include="$(ZTX16Root)src/ZTX16.Sdk/ZTX16.Sdk.csproj" />
     <!-- Build-order dependency only: the toolchain must exist before translation runs. -->
     <ProjectReference Include="$(ZTX16Root)src/ZTX16.Toolchain/ZTX16.Toolchain.csproj" ReferenceOutputAssembly="false" />

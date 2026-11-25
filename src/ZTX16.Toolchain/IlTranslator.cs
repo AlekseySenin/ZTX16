@@ -12,12 +12,13 @@ namespace ZTX16.Toolchain;
 /// Translates a compiled cartridge assembly (IL) into a ZTX16 executable module.
 /// </summary>
 /// <remarks>
-/// Supported subset (this iteration): numeric types, <c>bool</c>, <c>char</c>, enums, classes
-/// (fields, constructors, single inheritance, virtual/override, abstract), interfaces
-/// (implicit and explicit implementations, default methods), one-dimensional arrays, strings
-/// (literals, length, indexer, equality, concatenation) and null. Static fields and static
-/// constructors are supported. Structs, generics, exceptions, delegates and the BCL beyond
-/// the members listed are rejected with a <see cref="TranslationException"/>.
+/// Supported subset: numeric types, <c>bool</c>, <c>char</c>, enums, classes (fields,
+/// constructors, single inheritance, virtual/override/abstract), interfaces (implicit, explicit
+/// and default implementations), generic classes, interfaces and methods (monomorphized per
+/// set of type arguments), one-dimensional arrays, strings (literals, length, indexer,
+/// equality, concatenation) and null. Static fields and static constructors are supported.
+/// Structs, delegates, exceptions and the BCL beyond the members listed are rejected with a
+/// <see cref="TranslationException"/>.
 ///
 /// The cartridge is the single non-abstract class implementing <see cref="ICartridge"/>.
 /// Static constructors of every type the cartridge uses run once, in type-definition order,
@@ -42,14 +43,19 @@ public static class IlTranslator
     public static byte[] TranslateToExecutable(ReadOnlySpan<byte> assembly) => ExecutableFormat.Write(Translate(assembly));
 }
 
-/// <summary>A class or interface registered in the module.</summary>
+/// <summary>A class or interface registered in the module (one per generic instantiation).</summary>
 internal sealed class ClassInfo
 {
     public required string Name { get; init; }
 
     public required ClassBuilder Builder { get; init; }
 
-    public TypeDefinitionHandle? Handle { get; init; }
+    /// <summary>The cartridge type, or null for an SDK interface.</summary>
+    public ClassClrType? Type { get; init; }
+
+    public TypeDefinitionHandle? Handle => Type?.Handle;
+
+    public GenericContext Context => Type?.Context ?? GenericContext.Empty;
 
     public ClassInfo? Base { get; init; }
 
@@ -63,21 +69,25 @@ internal sealed class ClassInfo
 /// <summary>A virtual-method or interface-method slot.</summary>
 internal sealed record SelectorInfo(int Index, string Name, string SignatureKey, ClassInfo? Interface);
 
+/// <summary>A resolved reference to a method body in a specific generic context.</summary>
+internal readonly record struct MethodTarget(MethodDefinitionHandle Handle, GenericContext Context);
+
 /// <summary>Module-wide translation state.</summary>
 internal sealed class TranslationContext
 {
     private const string CartridgeInterface = "ZTX16.ICartridge";
+    private const string IntrinsicsType = "ZTX16.Core.Intrinsics";
 
     private readonly PEReader _pe;
     private readonly ModuleBuilder _module = new();
-    private readonly Dictionary<MethodDefinitionHandle, FunctionBuilder> _functions = [];
-    private readonly Queue<(MethodDefinitionHandle Handle, FunctionBuilder Builder, MethodSignature<ClrType> Signature)> _pending = new();
-    private readonly Dictionary<FieldDefinitionHandle, (int Index, VmTypeInfo Type)> _globals = [];
-    private readonly Dictionary<FieldDefinitionHandle, (int Index, VmTypeInfo Type)> _instanceFields = [];
+    private readonly Dictionary<string, FunctionBuilder> _functions = new(StringComparer.Ordinal);
+    private readonly Queue<(MethodDefinitionHandle Handle, GenericContext Context, FunctionBuilder Builder)> _pending = new();
+    private readonly Dictionary<string, (int Index, VmTypeInfo Type)> _globals = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (int Index, VmTypeInfo Type)> _instanceFields = new(StringComparer.Ordinal);
     private readonly HashSet<string> _functionNames = new(StringComparer.Ordinal);
-    private readonly HashSet<TypeDefinitionHandle> _touchedTypes = [];
-    private readonly HashSet<TypeDefinitionHandle> _scheduledConstructors = [];
-    private readonly Dictionary<TypeDefinitionHandle, ClassInfo> _classes = [];
+    private readonly Dictionary<string, (TypeDefinitionHandle Handle, GenericContext Context)> _touchedTypes = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, FunctionBuilder?> _staticConstructors = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, ClassInfo> _classes = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ClassInfo> _sdkInterfaces = new(StringComparer.Ordinal);
     private readonly List<ClassInfo> _classList = [];
     private readonly Dictionary<string, SelectorInfo> _selectors = new(StringComparer.Ordinal);
@@ -98,8 +108,8 @@ internal sealed class TranslationContext
 
     public VmModule Run()
     {
-        (ClassInfo cartridge, TypeDefinitionHandle cartridgeHandle) = FindCartridgeClass();
-        TypeDefinition cartridgeType = Reader.GetTypeDefinition(cartridgeHandle);
+        ClassInfo cartridge = FindCartridgeClass();
+        TypeDefinition cartridgeType = Reader.GetTypeDefinition(cartridge.Handle!.Value);
 
         MethodDefinitionHandle constructor = FindMethods(cartridgeType, ".ctor")
             .FirstOrDefault(h => !Reader.GetMethodDefinition(h).IsStatic() && Reader.GetMethodDefinition(h).DecodeSignature(TypeProvider, null).ParameterTypes.Length == 0);
@@ -108,7 +118,7 @@ internal sealed class TranslationContext
             throw new TranslationException($"Cartridge class '{cartridge.Name}' must have a public parameterless constructor.");
         }
 
-        FunctionBuilder ctor = GetFunction(constructor, cartridge.Name);
+        FunctionBuilder ctor = GetFunction(new MethodTarget(constructor, GenericContext.Empty), cartridge.Name);
         FunctionBuilder initialize = LifecycleImplementation(cartridge, VmModule.LifecycleExports.Initialize, required: true)!;
         FunctionBuilder tick = LifecycleImplementation(cartridge, VmModule.LifecycleExports.Tick, required: true)!;
         FunctionBuilder render = LifecycleImplementation(cartridge, VmModule.LifecycleExports.Render, required: true)!;
@@ -164,7 +174,7 @@ internal sealed class TranslationContext
         {
             while (_pending.TryDequeue(out var item))
             {
-                new MethodTranslator(this, Reader.GetMethodDefinition(item.Handle), item.Builder, item.Signature).Translate();
+                new MethodTranslator(this, Reader.GetMethodDefinition(item.Handle), item.Context, item.Builder).Translate();
             }
 
             changed = ScheduleStaticConstructors() | FillDispatchTables();
@@ -172,58 +182,68 @@ internal sealed class TranslationContext
         while (changed || _pending.Count > 0);
     }
 
+    /// <summary>Records that a type (instantiation) is used, so its static constructor runs.</summary>
+    private void Touch(TypeDefinitionHandle handle, GenericContext context) =>
+        _touchedTypes.TryAdd(TypeKey(handle, context), (handle, context with { MethodArgs = [] }));
+
+    private string TypeKey(TypeDefinitionHandle handle, GenericContext context) =>
+        $"{ClrTypeProvider.DefinitionName(Reader, handle)}{(context.TypeArgs.IsDefaultOrEmpty ? "" : $"<{string.Join(",", context.TypeArgs)}>")}";
+
     private bool ScheduleStaticConstructors()
     {
         bool added = false;
-        foreach (TypeDefinitionHandle type in _touchedTypes.ToArray())
+        foreach ((string key, (TypeDefinitionHandle handle, GenericContext context)) in _touchedTypes.ToArray())
         {
-            if (_scheduledConstructors.Add(type) && FindMethods(Reader.GetTypeDefinition(type), ".cctor").FirstOrDefault() is { IsNil: false } cctor)
+            if (_staticConstructors.ContainsKey(key))
             {
-                GetFunction(cctor, $"{TypeName(type)} static constructor");
-                added = true;
+                continue;
             }
+
+            MethodDefinitionHandle cctor = FindMethods(Reader.GetTypeDefinition(handle), ".cctor").FirstOrDefault();
+            _staticConstructors[key] = cctor.IsNil ? null : GetFunction(new MethodTarget(cctor, context), $"{key} static constructor");
+            added |= !cctor.IsNil;
         }
 
         return added;
     }
 
     private IEnumerable<FunctionBuilder> StaticConstructorsInOrder() =>
-        Reader.TypeDefinitions
-            .Where(_scheduledConstructors.Contains)
-            .Select(t => FindMethods(Reader.GetTypeDefinition(t), ".cctor").FirstOrDefault())
-            .Where(h => !h.IsNil)
-            .Select(h => _functions[h]);
+        _touchedTypes
+            .OrderBy(t => MetadataTokens.GetRowNumber(t.Value.Handle))
+            .ThenBy(t => t.Key, StringComparer.Ordinal)
+            .Select(t => _staticConstructors.GetValueOrDefault(t.Key))
+            .OfType<FunctionBuilder>();
 
     // ---- classes ------------------------------------------------------------------------
 
-    public ClassInfo GetClass(TypeDefinitionHandle handle, string where)
+    public ClassInfo GetClass(TypeDefinitionHandle handle, string where) => GetClass(ClassTypeOf(handle, where), where);
+
+    public ClassInfo GetClass(ClassClrType type, string where)
     {
-        if (_classes.TryGetValue(handle, out ClassInfo? existing))
+        if (_classes.TryGetValue(type.Display, out ClassInfo? existing))
         {
             return existing;
         }
 
-        if (TypeProvider.GetTypeFromDefinition(Reader, handle, 0) is not ClassClrType classType)
+        TypeDefinition definition = Reader.GetTypeDefinition(type.Handle);
+        int genericParameters = definition.GetGenericParameters().Count;
+        if (genericParameters != (type.TypeArgs.IsDefault ? 0 : type.TypeArgs.Length))
         {
-            ClrType t = TypeProvider.GetTypeFromDefinition(Reader, handle, 0);
-            throw new TranslationException($"{where}: type '{t}' cannot be used as a class{(t is UnsupportedClrType u ? $" ({u.Reason})" : string.Empty)}.");
+            throw new TranslationException($"{where}: generic type '{type.FullName}' used without type arguments.");
         }
 
-        TypeDefinition definition = Reader.GetTypeDefinition(handle);
+        GenericContext context = type.Context;
         ClassInfo? baseClass = null;
-        if (!classType.IsInterface)
+        if (!type.IsInterface)
         {
-            switch (definition.BaseType.Kind)
+            ClrType? baseType = definition.BaseType.IsNil ? null : ResolveTypeToken(definition.BaseType, context);
+            baseClass = baseType switch
             {
-                case HandleKind.TypeDefinition:
-                    baseClass = GetClass((TypeDefinitionHandle)definition.BaseType, where);
-                    break;
-                case HandleKind.TypeReference when ClrTypeProvider.BaseTypeName(Reader, definition) == "System.Object":
-                    break;
-                default:
-                    throw new TranslationException(
-                        $"{where}: class '{classType.FullName}' derives from '{ClrTypeProvider.BaseTypeName(Reader, definition)}'; cartridge classes may only derive from object or other cartridge classes.");
-            }
+                ClassClrType c => GetClass(c, where),
+                ObjectClrType => null,
+                _ => throw new TranslationException(
+                    $"{where}: class '{type.Display}' derives from '{baseType}'; cartridge classes may only derive from object or other cartridge classes."),
+            };
         }
 
         var fields = new List<VmType>(baseClass?.Builder.Fields ?? []);
@@ -236,39 +256,52 @@ internal sealed class TranslationContext
                 continue;
             }
 
-            string fieldName = $"{classType.FullName}.{Reader.GetString(field.Name)}";
             slots[fieldHandle] = fields.Count;
-            fields.Add(ClrTypeMapping.MapValue(field.DecodeSignature(TypeProvider, null), $"field '{fieldName}'").Type!.Value);
+            fields.Add(ClrTypeMapping.MapValue(field.DecodeSignature(TypeProvider, context), $"field '{type.Display}.{Reader.GetString(field.Name)}'").Type!.Value);
         }
 
         var info = new ClassInfo
         {
-            Name = TypeName(handle),
-            Handle = handle,
+            Name = type.Display,
+            Type = type,
             Base = baseClass,
-            Builder = _module.DefineClass(TypeName(handle), baseClass?.Builder.Index ?? VmClass.NoBase, classType.IsInterface, fields),
+            Builder = _module.DefineClass(type.Display, baseClass?.Builder.Index ?? VmClass.NoBase, type.IsInterface, fields),
         };
         foreach ((FieldDefinitionHandle fieldHandle, int slot) in slots)
         {
             info.Slots[fieldHandle] = slot;
         }
 
-        _classes[handle] = info;
+        _classes[type.Display] = info;
         _classList.Add(info);
-        _touchedTypes.Add(handle);
+        Touch(type.Handle, context);
 
         foreach (InterfaceImplementationHandle implHandle in definition.GetInterfaceImplementations())
         {
-            EntityHandle iface = Reader.GetInterfaceImplementation(implHandle).Interface;
-            info.DirectInterfaces.Add(iface.Kind switch
+            ClrType iface = ResolveTypeToken(Reader.GetInterfaceImplementation(implHandle).Interface, context);
+            if (iface is UnsupportedClrType { Description: "System.Collections.IEnumerable" })
             {
-                HandleKind.TypeDefinition => GetClass((TypeDefinitionHandle)iface, where),
-                HandleKind.TypeReference when TypeProvider.GetTypeFromReference(Reader, (TypeReferenceHandle)iface, 0) is SdkInterfaceClrType sdk => GetSdkInterface(sdk.FullName),
-                _ => throw new TranslationException($"{where}: class '{classType.FullName}' implements '{TypeTokenName(iface)}', which is not supported (only cartridge and ZTX16 SDK interfaces)."),
+                // Marker that C# requires for collection initializers; its method is never called.
+                continue;
+            }
+
+            info.DirectInterfaces.Add(iface switch
+            {
+                ClassClrType c => GetClass(c, where),
+                SdkInterfaceClrType sdk => GetSdkInterface(sdk.FullName),
+                _ => throw new TranslationException(
+                    $"{where}: class '{type.Display}' implements '{iface}', which is not supported (only cartridge and ZTX16 SDK interfaces)."),
             });
         }
 
         return info;
+    }
+
+    private ClassClrType ClassTypeOf(TypeDefinitionHandle handle, string where)
+    {
+        ClrType t = TypeProvider.GetTypeFromDefinition(Reader, handle, 0);
+        return t as ClassClrType
+            ?? throw new TranslationException($"{where}: type '{t}' cannot be used as a class{(t is UnsupportedClrType u ? $" ({u.Reason})" : string.Empty)}.");
     }
 
     private ClassInfo GetSdkInterface(string fullName)
@@ -284,19 +317,19 @@ internal sealed class TranslationContext
     }
 
     /// <summary>Returns the class to use for a cast or type test, or null if the cast is a no-op (to object).</summary>
-    public ClassInfo? ClassForTypeTest(EntityHandle token, string where) => ResolveTypeToken(token) switch
+    public ClassInfo? ClassForTypeTest(EntityHandle token, GenericContext context, string where) => ResolveTypeToken(token, context) switch
     {
-        ClassClrType c => GetClass(c.Handle, where),
+        ClassClrType c => GetClass(c, where),
         SdkInterfaceClrType sdk => GetSdkInterface(sdk.FullName),
         ObjectClrType => null,
         var other => throw new TranslationException($"{where}: casts and type tests to '{other}' are not supported yet."),
     };
 
-    public ClrType ResolveTypeToken(EntityHandle token) => token.Kind switch
+    public ClrType ResolveTypeToken(EntityHandle token, GenericContext context) => token.Kind switch
     {
         HandleKind.TypeDefinition => TypeProvider.GetTypeFromDefinition(Reader, (TypeDefinitionHandle)token, 0),
         HandleKind.TypeReference => TypeProvider.GetTypeFromReference(Reader, (TypeReferenceHandle)token, 0),
-        HandleKind.TypeSpecification => TypeProvider.GetTypeFromSpecification(Reader, null, (TypeSpecificationHandle)token, 0),
+        HandleKind.TypeSpecification => TypeProvider.GetTypeFromSpecification(Reader, context, (TypeSpecificationHandle)token, 0),
         _ => new UnsupportedClrType(token.Kind.ToString(), "unsupported type token"),
     };
 
@@ -312,7 +345,7 @@ internal sealed class TranslationContext
                 changed |= cls.Builder.Interfaces.Add(iface.Builder.Index);
             }
 
-            if (cls.IsInterface || cls.Handle is null)
+            if (cls.IsInterface || cls.Type is null)
             {
                 continue;
             }
@@ -324,7 +357,7 @@ internal sealed class TranslationContext
                     continue;
                 }
 
-                MethodDefinitionHandle? impl = selector.Interface is null
+                MethodTarget? impl = selector.Interface is null
                     ? FindVirtualImplementation(cls, selector.Name, selector.SignatureKey)
                     : interfaces.Contains(selector.Interface)
                         ? FindInterfaceImplementation(cls, selector.Interface, selector.Name, selector.SignatureKey)
@@ -367,16 +400,16 @@ internal sealed class TranslationContext
         return result;
     }
 
-    private MethodDefinitionHandle? FindVirtualImplementation(ClassInfo cls, string name, string signatureKey)
+    private MethodTarget? FindVirtualImplementation(ClassInfo cls, string name, string signatureKey)
     {
         for (ClassInfo? c = cls; c?.Handle is { } handle; c = c.Base)
         {
             foreach (MethodDefinitionHandle m in FindMethods(Reader.GetTypeDefinition(handle), name))
             {
                 MethodDefinition method = Reader.GetMethodDefinition(m);
-                if ((method.Attributes & MethodAttributes.Virtual) != 0 && SignatureKey(method) == signatureKey)
+                if ((method.Attributes & MethodAttributes.Virtual) != 0 && SignatureKey(method, c.Context) == signatureKey)
                 {
-                    return (method.Attributes & MethodAttributes.Abstract) != 0 ? null : m;
+                    return (method.Attributes & MethodAttributes.Abstract) != 0 ? null : new MethodTarget(m, c.Context);
                 }
             }
         }
@@ -384,7 +417,7 @@ internal sealed class TranslationContext
         return null;
     }
 
-    private MethodDefinitionHandle? FindInterfaceImplementation(ClassInfo cls, ClassInfo iface, string name, string signatureKey)
+    private MethodTarget? FindInterfaceImplementation(ClassInfo cls, ClassInfo iface, string name, string signatureKey)
     {
         // 1. Explicit implementations (MethodImpl rows), most derived first.
         for (ClassInfo? c = cls; c?.Handle is { } handle; c = c.Base)
@@ -392,11 +425,11 @@ internal sealed class TranslationContext
             foreach (MethodImplementationHandle implHandle in Reader.GetTypeDefinition(handle).GetMethodImplementations())
             {
                 MethodImplementation impl = Reader.GetMethodImplementation(implHandle);
-                if (DescribeMethod(impl.MethodDeclaration) is var (declaringType, declName, declKey)
+                if (DescribeMethod(impl.MethodDeclaration, c.Context) is var (declaringType, declName, declKey)
                     && declaringType == iface.Name && declName == name && declKey == signatureKey
                     && impl.MethodBody.Kind == HandleKind.MethodDefinition)
                 {
-                    return (MethodDefinitionHandle)impl.MethodBody;
+                    return new MethodTarget((MethodDefinitionHandle)impl.MethodBody, c.Context);
                 }
             }
         }
@@ -408,9 +441,9 @@ internal sealed class TranslationContext
             {
                 MethodDefinition method = Reader.GetMethodDefinition(m);
                 if (!method.IsStatic() && (method.Attributes & MethodAttributes.MemberAccessMask) == MethodAttributes.Public
-                    && (method.Attributes & MethodAttributes.Abstract) == 0 && SignatureKey(method) == signatureKey)
+                    && (method.Attributes & MethodAttributes.Abstract) == 0 && SignatureKey(method, c.Context) == signatureKey)
                 {
-                    return m;
+                    return new MethodTarget(m, c.Context);
                 }
             }
         }
@@ -421,9 +454,9 @@ internal sealed class TranslationContext
             foreach (MethodDefinitionHandle m in FindMethods(Reader.GetTypeDefinition(candidate.Handle!.Value), name))
             {
                 MethodDefinition method = Reader.GetMethodDefinition(m);
-                if (method.RelativeVirtualAddress != 0 && !method.IsStatic() && SignatureKey(method) == signatureKey)
+                if (method.RelativeVirtualAddress != 0 && !method.IsStatic() && SignatureKey(method, candidate.Context) == signatureKey)
                 {
-                    return m;
+                    return new MethodTarget(m, candidate.Context);
                 }
             }
         }
@@ -431,7 +464,7 @@ internal sealed class TranslationContext
         return null;
     }
 
-    private (ClassInfo Class, TypeDefinitionHandle Handle) FindCartridgeClass()
+    private ClassInfo FindCartridgeClass()
     {
         var candidates = new List<TypeDefinitionHandle>();
         foreach (TypeDefinitionHandle handle in Reader.TypeDefinitions)
@@ -443,13 +476,23 @@ internal sealed class TranslationContext
             }
         }
 
-        return candidates.Count switch
+        if (candidates.Count > 1)
         {
-            0 => throw new TranslationException($"No class implements {CartridgeInterface}. Declare 'public sealed class Game : ICartridge'."),
-            1 => (GetClass(candidates[0], "cartridge class"), candidates[0]),
-            _ => throw new TranslationException(
-                $"More than one class implements {CartridgeInterface}: {string.Join(", ", candidates.Select(TypeName))}."),
-        };
+            throw new TranslationException(
+                $"More than one class implements {CartridgeInterface}: {string.Join(", ", candidates.Select(h => ClrTypeProvider.DefinitionName(Reader, h)))}.");
+        }
+
+        if (candidates.Count == 0)
+        {
+            throw new TranslationException($"No class implements {CartridgeInterface}. Declare 'public sealed class Game : ICartridge'.");
+        }
+
+        if (Reader.GetTypeDefinition(candidates[0]).GetGenericParameters().Count > 0)
+        {
+            throw new TranslationException("The cartridge class cannot be generic.");
+        }
+
+        return GetClass(candidates[0], "cartridge class");
     }
 
     private bool ImplementsCartridge(TypeDefinitionHandle handle)
@@ -457,7 +500,7 @@ internal sealed class TranslationContext
         TypeDefinition type = Reader.GetTypeDefinition(handle);
         foreach (InterfaceImplementationHandle implHandle in type.GetInterfaceImplementations())
         {
-            if (TypeTokenName(Reader.GetInterfaceImplementation(implHandle).Interface) == CartridgeInterface)
+            if (ResolveTypeToken(Reader.GetInterfaceImplementation(implHandle).Interface, GenericContext.Empty) is SdkInterfaceClrType { FullName: CartridgeInterface })
             {
                 return true;
             }
@@ -469,8 +512,7 @@ internal sealed class TranslationContext
     private FunctionBuilder? LifecycleImplementation(ClassInfo cartridge, string name, bool required)
     {
         ClassInfo iface = GetSdkInterface(CartridgeInterface);
-        string key = $"{name}():Void";
-        if (FindInterfaceImplementation(cartridge, iface, name, key) is { } impl)
+        if (FindInterfaceImplementation(cartridge, iface, name, $"{name}():Void") is { } impl)
         {
             return GetFunction(impl, $"{cartridge.Name}.{name}");
         }
@@ -483,51 +525,118 @@ internal sealed class TranslationContext
     // ---- members ------------------------------------------------------------------------
 
     /// <summary>Resolves a call target to its full VM signature (receiver first for instance calls) and the emitter.</summary>
-    public (VmSignature Signature, Action<FunctionBuilder> Emit) ResolveCall(EntityHandle target, bool virtualCall, string where)
+    public (VmSignature Signature, Action<FunctionBuilder> Emit) ResolveCall(EntityHandle target, bool virtualCall, GenericContext context, string where)
+    {
+        if (target.Kind == HandleKind.MemberReference && ResolveExternalMember((MemberReferenceHandle)target, virtualCall, context, where) is { } external)
+        {
+            return external;
+        }
+
+        (MethodTarget method, ClassInfo? owner) = ResolveMethod(target, context, where);
+        MethodDefinition definition = Reader.GetMethodDefinition(method.Handle);
+
+        if (ClrTypeProvider.DefinitionName(Reader, definition.GetDeclaringType()) == IntrinsicsType)
+        {
+            return Intrinsic(Reader.GetString(definition.Name), method.Context, where);
+        }
+
+        if (!definition.IsStatic())
+        {
+            owner ??= GetClass(definition.GetDeclaringType(), where);
+            bool isVirtual = (definition.Attributes & MethodAttributes.Virtual) != 0 && (definition.Attributes & MethodAttributes.Final) == 0;
+            if (virtualCall && (isVirtual || owner.IsInterface))
+            {
+                if (!method.Context.MethodArgs.IsDefaultOrEmpty)
+                {
+                    throw new TranslationException($"{where}: generic virtual methods are not supported yet.");
+                }
+
+                MethodSignature<ClrType> signature = definition.DecodeSignature(TypeProvider, method.Context);
+                SelectorInfo selector = GetSelector(Reader.GetString(definition.Name), signature, owner.IsInterface ? owner : null, where);
+                return (ClrTypeMapping.ToVmSignature(signature, where, hasThis: true), f => f.Emit(OpCode.CallVirtual, selector.Index));
+            }
+        }
+
+        FunctionBuilder callee = GetFunction(method, where);
+        return (callee.Signature, f => f.Call(callee));
+    }
+
+    /// <summary>
+    /// Resolves a method token (definition, member reference into a generic cartridge type, or
+    /// generic method instantiation) to the method body and the generic context it runs in.
+    /// </summary>
+    private (MethodTarget Method, ClassInfo? Owner) ResolveMethod(EntityHandle target, GenericContext context, string where)
     {
         switch (target.Kind)
         {
             case HandleKind.MethodDefinition:
                 {
                     var handle = (MethodDefinitionHandle)target;
-                    MethodDefinition method = Reader.GetMethodDefinition(handle);
-                    if (method.IsStatic())
-                    {
-                        FunctionBuilder callee = GetFunction(handle, where);
-                        return (callee.Signature, f => f.Call(callee));
-                    }
-
-                    ClassInfo owner = GetClass(method.GetDeclaringType(), where);
-                    bool isVirtual = (method.Attributes & MethodAttributes.Virtual) != 0 && (method.Attributes & MethodAttributes.Final) == 0;
-                    if (virtualCall && (isVirtual || owner.IsInterface))
-                    {
-                        MethodSignature<ClrType> signature = method.DecodeSignature(TypeProvider, null);
-                        string name = Reader.GetString(method.Name);
-                        SelectorInfo selector = GetSelector(name, signature, owner.IsInterface ? owner : null, where);
-                        return (ClrTypeMapping.ToVmSignature(signature, where, hasThis: true), f => f.Emit(OpCode.CallVirtual, selector.Index));
-                    }
-
-                    FunctionBuilder direct = GetFunction(handle, where);
-                    return (direct.Signature, f => f.Call(direct));
+                    TypeDefinitionHandle declaring = Reader.GetMethodDefinition(handle).GetDeclaringType();
+                    // A definition token is only used for non-generic declaring types (or from inside the type itself).
+                    GenericContext typeContext = Reader.GetTypeDefinition(declaring).GetGenericParameters().Count == 0
+                        ? GenericContext.Empty
+                        : context with { MethodArgs = [] };
+                    return (new MethodTarget(handle, typeContext), null);
                 }
 
             case HandleKind.MemberReference:
-                return ResolveMemberReference((MemberReferenceHandle)target, virtualCall, where);
+                {
+                    MemberReference reference = Reader.GetMemberReference((MemberReferenceHandle)target);
+                    if (ResolveTypeToken(reference.Parent, context) is not ClassClrType parent)
+                    {
+                        throw new TranslationException($"{where}: call to '{ParentTypeName(reference.Parent, context)}.{Reader.GetString(reference.Name)}' is not supported.");
+                    }
+
+                    string name = Reader.GetString(reference.Name);
+                    string key = ClrTypeMapping.SignatureKey(name, reference.DecodeMethodSignature(TypeProvider, null));
+                    foreach (MethodDefinitionHandle m in FindMethods(Reader.GetTypeDefinition(parent.Handle), name))
+                    {
+                        if (SignatureKey(Reader.GetMethodDefinition(m), null) == key)
+                        {
+                            ClassInfo owner = GetClass(parent, where);
+                            return (new MethodTarget(m, parent.Context), owner);
+                        }
+                    }
+
+                    throw new TranslationException($"{where}: method '{parent}.{name}' not found.");
+                }
 
             case HandleKind.MethodSpecification:
-                throw new TranslationException($"{where}: generic methods are not supported yet.");
+                {
+                    MethodSpecification spec = Reader.GetMethodSpecification((MethodSpecificationHandle)target);
+                    ImmutableArray<ClrType> methodArgs = spec.DecodeSignature(TypeProvider, context);
+                    if (methodArgs.FirstOrDefault(a => a is UnsupportedClrType) is UnsupportedClrType bad)
+                    {
+                        throw new TranslationException($"{where}: generic argument '{bad.Description}' is not supported ({bad.Reason}).");
+                    }
+
+                    (MethodTarget method, ClassInfo? owner) = ResolveMethod(spec.Method, context, where);
+                    return (method with { Context = method.Context.WithMethodArgs(methodArgs) }, owner);
+                }
 
             default:
                 throw new TranslationException($"{where}: unsupported call target ({target.Kind}).");
         }
     }
 
-    private (VmSignature, Action<FunctionBuilder>) ResolveMemberReference(MemberReferenceHandle handle, bool virtualCall, string where)
+    /// <summary>SDK syscalls, SDK interface methods and the supported BCL members. Null for cartridge members.</summary>
+    private (VmSignature, Action<FunctionBuilder>)? ResolveExternalMember(MemberReferenceHandle handle, bool virtualCall, GenericContext context, string where)
     {
         MemberReference reference = Reader.GetMemberReference(handle);
-        string typeName = ParentTypeName(reference.Parent);
+        if (reference.Parent.Kind == HandleKind.TypeSpecification && ResolveTypeToken(reference.Parent, context) is ClassClrType)
+        {
+            return null; // member of a generic cartridge type
+        }
+
+        if (reference.Parent.Kind is HandleKind.TypeDefinition)
+        {
+            return null;
+        }
+
+        string typeName = ParentTypeName(reference.Parent, context);
         string methodName = Reader.GetString(reference.Name);
-        MethodSignature<ClrType> signature = reference.DecodeMethodSignature(TypeProvider, null);
+        MethodSignature<ClrType> signature = reference.DecodeMethodSignature(TypeProvider, context);
         string display = $"{typeName}.{methodName}";
 
         if (SdkAbi.FindByMethod(typeName, methodName) is { } syscall)
@@ -562,11 +671,13 @@ internal sealed class TranslationContext
                 return (VmSignature.Of(R, R, R, R), f => f.Emit(OpCode.StringConcat).Emit(OpCode.StringConcat));
             case ("System.String", "Concat", 4) when signature.ParameterTypes.All(p => p is StringClrType):
                 return (VmSignature.Of(R, R, R, R, R), f => f.Emit(OpCode.StringConcat).Emit(OpCode.StringConcat).Emit(OpCode.StringConcat));
+            case ("System.String", "Concat", 1) when signature.ParameterTypes[0] is ArrayClrType { Element: StringClrType }:
+                return (VmSignature.Of(R, R), f => f.Emit(OpCode.StringConcatArray));
             case ("System.String", "IsNullOrEmpty", 1):
-                return (VmSignature.Of(I, R), f => EmitIsNullOrEmpty(f));
+                return (VmSignature.Of(I, R), EmitIsNullOrEmpty);
         }
 
-        if (_sdkInterfaces.ContainsKey(typeName) || SdkAbi.SdkAssembly.GetType(typeName) is { IsInterface: true })
+        if (SdkAbi.SdkAssembly.GetType(typeName) is { IsInterface: true })
         {
             if (!virtualCall)
             {
@@ -577,99 +688,197 @@ internal sealed class TranslationContext
             return (ClrTypeMapping.ToVmSignature(signature, display, hasThis: true), f => f.Emit(OpCode.CallVirtual, selector.Index));
         }
 
+        string hint = typeName.StartsWith("System.Collections.Generic.", StringComparison.Ordinal)
+            ? " Use the ZTX16.Collections equivalent."
+            : string.Empty;
         throw new TranslationException(
-            $"{where}: call to '{display}' is not supported. Cartridges may call their own methods, ZTX16 SDK APIs and a small set of string members.");
+            $"{where}: call to '{display}' is not supported.{hint} Cartridges may call their own methods, ZTX16 SDK APIs and a small set of string members.");
     }
 
-    // string.IsNullOrEmpty(s): s == null || s.Length == 0, without branches: (s == null) | (len(s ?? "") == 0)
-    private void EmitIsNullOrEmpty(FunctionBuilder f)
+    /// <summary>Runtime support used by ZTX16.Collections, specialized per type argument.</summary>
+    private (VmSignature, Action<FunctionBuilder>) Intrinsic(string name, GenericContext context, string where)
     {
-        f.Emit(OpCode.Dup).Emit(OpCode.ConstNull).Emit(OpCode.EqRef);       // s, isNull
+        VmType R = VmType.Ref, I = VmType.I32;
+        switch (name)
+        {
+            case "Fail":
+                return (VmSignature.Of(null, R), f => f.Emit(OpCode.Trap));
+            case "Hash" or "Equal":
+                {
+                    VmType t = ClrTypeMapping.MapValue(context.MethodArgs[0], $"{where} intrinsic {name}").Type!.Value;
+                    if (name == "Hash")
+                    {
+                        return (VmSignature.Of(I, t), f => f.Emit(OpCode.Hash, (int)t));
+                    }
+
+                    OpCode eq = t switch
+                    {
+                        VmType.I32 => OpCode.EqI32,
+                        VmType.I64 => OpCode.EqI64,
+                        VmType.F32 => OpCode.EqF32,
+                        VmType.F64 => OpCode.EqF64,
+                        _ => OpCode.ValueEquals,
+                    };
+                    return (VmSignature.Of(I, t, t), f => f.Emit(eq));
+                }
+
+            default:
+                throw new TranslationException($"{where}: unknown intrinsic '{name}'.");
+        }
+    }
+
+    // string.IsNullOrEmpty(s): s == null ? true : s.Length == 0
+    private static void EmitIsNullOrEmpty(FunctionBuilder f)
+    {
         Label done = f.DefineLabel();
         Label notNull = f.DefineLabel();
-        f.Emit(OpCode.BranchIfFalse, notNull);                               // s
+        f.Emit(OpCode.Dup).Emit(OpCode.ConstNull).Emit(OpCode.EqRef);
+        f.Emit(OpCode.BranchIfFalse, notNull);
         f.Emit(OpCode.Pop).ConstI32(1).Emit(OpCode.Branch, done);
         f.Mark(notNull).Emit(OpCode.StringLength).ConstI32(0).Emit(OpCode.EqI32);
         f.Mark(done);
     }
 
     /// <summary>Resolves a constructor used by <c>newobj</c>.</summary>
-    public (VmSignature Constructor, Action<FunctionBuilder> Emit) ResolveNew(EntityHandle target, string where)
+    public (VmSignature Constructor, Action<FunctionBuilder> Emit) ResolveNew(EntityHandle target, GenericContext context, string where)
     {
-        if (target.Kind != HandleKind.MethodDefinition)
+        if (target.Kind == HandleKind.MemberReference
+            && ResolveTypeToken(Reader.GetMemberReference((MemberReferenceHandle)target).Parent, context) is not ClassClrType)
         {
-            string name = target.Kind == HandleKind.MemberReference
-                ? ParentTypeName(Reader.GetMemberReference((MemberReferenceHandle)target).Parent)
-                : target.Kind.ToString();
-            throw new TranslationException($"{where}: creating instances of '{name}' is not supported; only cartridge classes can be instantiated.");
+            string name = ParentTypeName(Reader.GetMemberReference((MemberReferenceHandle)target).Parent, context);
+            string hint = name.StartsWith("System.Collections.Generic.", StringComparison.Ordinal) ? " Use the ZTX16.Collections equivalent." : string.Empty;
+            throw new TranslationException($"{where}: creating instances of '{name}' is not supported; only cartridge classes can be instantiated.{hint}");
         }
 
-        var handle = (MethodDefinitionHandle)target;
-        MethodDefinition method = Reader.GetMethodDefinition(handle);
-        ClassInfo cls = GetClass(method.GetDeclaringType(), where);
-        if ((Reader.GetTypeDefinition(method.GetDeclaringType()).Attributes & TypeAttributes.Abstract) != 0)
+        (MethodTarget method, ClassInfo? owner) = ResolveMethod(target, context, where);
+        TypeDefinitionHandle declaring = Reader.GetMethodDefinition(method.Handle).GetDeclaringType();
+        owner ??= GetClass(declaring, where);
+        if ((Reader.GetTypeDefinition(declaring).Attributes & TypeAttributes.Abstract) != 0)
         {
-            throw new TranslationException($"{where}: cannot instantiate abstract class '{cls.Name}'.");
+            throw new TranslationException($"{where}: cannot instantiate abstract class '{owner.Name}'.");
         }
 
-        FunctionBuilder ctor = GetFunction(handle, where);
-        return (ctor.Signature, f => f.New(cls.Builder.Index, ctor.Index));
+        FunctionBuilder ctor = GetFunction(method, where);
+        return (ctor.Signature, f => f.New(owner.Builder.Index, ctor.Index));
     }
 
-    public (int Index, VmTypeInfo Type) GetInstanceField(EntityHandle handle, string where)
+    public (int Index, VmTypeInfo Type) GetInstanceField(EntityHandle handle, GenericContext context, string where)
     {
-        if (handle.Kind != HandleKind.FieldDefinition)
-        {
-            throw new TranslationException($"{where}: only fields declared in the cartridge can be used.");
-        }
-
-        var fieldHandle = (FieldDefinitionHandle)handle;
-        if (_instanceFields.TryGetValue(fieldHandle, out var existing))
+        (FieldDefinitionHandle fieldHandle, ClassClrType ownerType) = ResolveField(handle, context, where);
+        string key = $"{ownerType.Display}::{MetadataTokens.GetRowNumber(fieldHandle)}";
+        if (_instanceFields.TryGetValue(key, out var existing))
         {
             return existing;
         }
 
         FieldDefinition field = Reader.GetFieldDefinition(fieldHandle);
-        ClassInfo owner = GetClass(field.GetDeclaringType(), where);
+        ClassInfo owner = GetClass(ownerType, where);
         if (!owner.Slots.TryGetValue(fieldHandle, out int slot))
         {
             throw new TranslationException($"{where}: '{owner.Name}.{Reader.GetString(field.Name)}' is not an instance field.");
         }
 
-        VmTypeInfo type = ClrTypeMapping.MapValue(field.DecodeSignature(TypeProvider, null), $"field '{owner.Name}.{Reader.GetString(field.Name)}'");
+        VmTypeInfo type = ClrTypeMapping.MapValue(field.DecodeSignature(TypeProvider, ownerType.Context), $"field '{owner.Name}.{Reader.GetString(field.Name)}'");
         var result = (_module.AddField(owner.Builder.Index, slot), type);
-        _instanceFields[fieldHandle] = result;
+        _instanceFields[key] = result;
         return result;
     }
 
-    public (int Index, VmTypeInfo Type) GetGlobal(EntityHandle handle, string where)
+    public (int Index, VmTypeInfo Type) GetGlobal(EntityHandle handle, GenericContext context, string where)
     {
-        if (handle.Kind != HandleKind.FieldDefinition)
-        {
-            throw new TranslationException($"{where}: only static fields declared in the cartridge can be used.");
-        }
-
-        var fieldHandle = (FieldDefinitionHandle)handle;
-        if (_globals.TryGetValue(fieldHandle, out var existing))
+        (FieldDefinitionHandle fieldHandle, ClassClrType ownerType) = ResolveField(handle, context, where);
+        string key = $"{ownerType.Display}::{MetadataTokens.GetRowNumber(fieldHandle)}";
+        if (_globals.TryGetValue(key, out var existing))
         {
             return existing;
         }
 
         FieldDefinition field = Reader.GetFieldDefinition(fieldHandle);
-        string name = $"{TypeName(field.GetDeclaringType())}.{Reader.GetString(field.Name)}";
+        string name = $"{ownerType.Display}.{Reader.GetString(field.Name)}";
         if ((field.Attributes & FieldAttributes.Static) == 0)
         {
             throw new TranslationException($"{where}: '{name}' is an instance field.");
         }
 
-        VmTypeInfo type = ClrTypeMapping.MapValue(field.DecodeSignature(TypeProvider, null), $"field '{name}'");
+        VmTypeInfo type = ClrTypeMapping.MapValue(field.DecodeSignature(TypeProvider, ownerType.Context), $"field '{name}'");
         int index = _module.AddGlobal(type.Type!.Value);
-        _touchedTypes.Add(field.GetDeclaringType());
-        _globals[fieldHandle] = (index, type);
+        Touch(ownerType.Handle, ownerType.Context);
+        _globals[key] = (index, type);
         return (index, type);
     }
 
+    private (FieldDefinitionHandle Field, ClassClrType Owner) ResolveField(EntityHandle handle, GenericContext context, string where)
+    {
+        switch (handle.Kind)
+        {
+            case HandleKind.FieldDefinition:
+                {
+                    var fieldHandle = (FieldDefinitionHandle)handle;
+                    TypeDefinitionHandle declaring = Reader.GetFieldDefinition(fieldHandle).GetDeclaringType();
+                    ClassClrType owner = TypeProvider.GetTypeFromDefinition(Reader, declaring, 0) switch
+                    {
+                        ClassClrType c when Reader.GetTypeDefinition(declaring).GetGenericParameters().Count == 0 => c,
+                        ClassClrType c => c.Instantiate(context.TypeArgs),
+                        var other => throw new TranslationException($"{where}: fields of '{other}' are not supported."),
+                    };
+                    return (fieldHandle, owner);
+                }
+
+            case HandleKind.MemberReference:
+                {
+                    MemberReference reference = Reader.GetMemberReference((MemberReferenceHandle)handle);
+                    if (ResolveTypeToken(reference.Parent, context) is not ClassClrType owner)
+                    {
+                        throw new TranslationException($"{where}: only fields declared in the cartridge can be used.");
+                    }
+
+                    string name = Reader.GetString(reference.Name);
+                    foreach (FieldDefinitionHandle f in Reader.GetTypeDefinition(owner.Handle).GetFields())
+                    {
+                        if (Reader.GetString(Reader.GetFieldDefinition(f).Name) == name)
+                        {
+                            return (f, owner);
+                        }
+                    }
+
+                    throw new TranslationException($"{where}: field '{owner}.{name}' not found.");
+                }
+
+            default:
+                throw new TranslationException($"{where}: only fields declared in the cartridge can be used.");
+        }
+    }
+
     public int AddString(string value) => _module.AddString(value);
+
+    /// <summary>If <paramref name="target"/> is <c>ToString()</c> on a supported primitive, its format kind.</summary>
+    public VmFormatKind? PrimitiveToString(EntityHandle target)
+    {
+        if (target.Kind != HandleKind.MemberReference)
+        {
+            return null;
+        }
+
+        MemberReference reference = Reader.GetMemberReference((MemberReferenceHandle)target);
+        if (Reader.GetString(reference.Name) != "ToString" || reference.Parent.Kind != HandleKind.TypeReference
+            || reference.DecodeMethodSignature(TypeProvider, null).ParameterTypes.Length != 0)
+        {
+            return null;
+        }
+
+        return TypeReferenceName((TypeReferenceHandle)reference.Parent) switch
+        {
+            "System.Int32" or "System.Int16" or "System.SByte" => VmFormatKind.Int32,
+            "System.UInt32" or "System.UInt16" or "System.Byte" => VmFormatKind.UInt32,
+            "System.Int64" => VmFormatKind.Int64,
+            "System.UInt64" => VmFormatKind.UInt64,
+            "System.Single" => VmFormatKind.Single,
+            "System.Double" => VmFormatKind.Double,
+            "System.Char" => VmFormatKind.Char,
+            "System.Boolean" => VmFormatKind.Boolean,
+            _ => null,
+        };
+    }
 
     private SelectorInfo GetSelector(string name, MethodSignature<ClrType> signature, ClassInfo? iface, string where)
     {
@@ -685,18 +894,24 @@ internal sealed class TranslationContext
         return selector;
     }
 
-    private FunctionBuilder GetFunction(MethodDefinitionHandle handle, string where)
+    private FunctionBuilder GetFunction(MethodTarget target, string where)
     {
-        if (_functions.TryGetValue(handle, out FunctionBuilder? existing))
+        MethodDefinition method = Reader.GetMethodDefinition(target.Handle);
+        TypeDefinitionHandle declaring = method.GetDeclaringType();
+        string key = $"{MetadataTokens.GetRowNumber(target.Handle)}{target.Context.Key}";
+        if (_functions.TryGetValue(key, out FunctionBuilder? existing))
         {
             return existing;
         }
 
-        MethodDefinition method = Reader.GetMethodDefinition(handle);
-        string name = $"{TypeName(method.GetDeclaringType())}.{Reader.GetString(method.Name)}";
-        if (method.GetGenericParameters().Count > 0)
+        string typeName = TypeKey(declaring, target.Context);
+        string methodArgs = target.Context.MethodArgs.IsDefaultOrEmpty ? "" : $"<{string.Join(",", target.Context.MethodArgs)}>";
+        string name = $"{typeName}.{Reader.GetString(method.Name)}{methodArgs}";
+
+        int methodParameters = method.GetGenericParameters().Count;
+        if (methodParameters != (target.Context.MethodArgs.IsDefault ? 0 : target.Context.MethodArgs.Length))
         {
-            throw new TranslationException($"{where}: generic method '{name}' is not supported yet.");
+            throw new TranslationException($"{where}: generic method '{name}' used without type arguments.");
         }
 
         if ((method.Attributes & MethodAttributes.Abstract) != 0)
@@ -707,23 +922,23 @@ internal sealed class TranslationContext
         bool hasThis = !method.IsStatic();
         if (hasThis)
         {
-            GetClass(method.GetDeclaringType(), where);
+            GetClass(ClassTypeOf(declaring, where).Instantiate(target.Context.TypeArgs), where);
         }
 
-        MethodSignature<ClrType> signature = method.DecodeSignature(TypeProvider, null);
+        MethodSignature<ClrType> signature = method.DecodeSignature(TypeProvider, target.Context);
         FunctionBuilder builder = _module.DefineFunction(UniqueName(name), ClrTypeMapping.ToVmSignature(signature, name, hasThis));
-        _functions[handle] = builder;
-        _touchedTypes.Add(method.GetDeclaringType());
-        _pending.Enqueue((handle, builder, signature));
+        _functions[key] = builder;
+        Touch(declaring, target.Context);
+        _pending.Enqueue((target.Handle, target.Context, builder));
         return builder;
     }
 
     // ---- metadata helpers ---------------------------------------------------------------
 
-    private string SignatureKey(MethodDefinition method) =>
-        ClrTypeMapping.SignatureKey(Reader.GetString(method.Name), method.DecodeSignature(TypeProvider, null));
+    private string SignatureKey(MethodDefinition method, GenericContext? context) =>
+        ClrTypeMapping.SignatureKey(Reader.GetString(method.Name), method.DecodeSignature(TypeProvider, context));
 
-    private (string DeclaringType, string Name, string Key)? DescribeMethod(EntityHandle handle)
+    private (string DeclaringType, string Name, string Key)? DescribeMethod(EntityHandle handle, GenericContext context)
     {
         switch (handle.Kind)
         {
@@ -731,15 +946,16 @@ internal sealed class TranslationContext
                 {
                     MethodDefinition method = Reader.GetMethodDefinition((MethodDefinitionHandle)handle);
                     string name = Reader.GetString(method.Name);
-                    return (TypeName(method.GetDeclaringType()), name, SignatureKey(method));
+                    return (ClrTypeProvider.DefinitionName(Reader, method.GetDeclaringType()), name, SignatureKey(method, GenericContext.Empty));
                 }
 
             case HandleKind.MemberReference:
                 {
                     MemberReference reference = Reader.GetMemberReference((MemberReferenceHandle)handle);
                     string name = Reader.GetString(reference.Name);
-                    return (ParentTypeName(reference.Parent), name,
-                        ClrTypeMapping.SignatureKey(name, reference.DecodeMethodSignature(TypeProvider, null)));
+                    ClrType parent = ResolveTypeToken(reference.Parent, context);
+                    GenericContext parentContext = parent is ClassClrType c ? c.Context : GenericContext.Empty;
+                    return (parent.Display, name, ClrTypeMapping.SignatureKey(name, reference.DecodeMethodSignature(TypeProvider, parentContext)));
                 }
 
             default:
@@ -750,18 +966,15 @@ internal sealed class TranslationContext
     private IEnumerable<MethodDefinitionHandle> FindMethods(TypeDefinition type, string name) =>
         type.GetMethods().Where(h => Reader.GetString(Reader.GetMethodDefinition(h).Name) == name);
 
-    private string TypeTokenName(EntityHandle handle) => handle.Kind switch
-    {
-        HandleKind.TypeReference => ParentTypeName(handle),
-        HandleKind.TypeDefinition => TypeName((TypeDefinitionHandle)handle),
-        _ => ResolveTypeToken(handle).ToString(),
-    };
-
-    private string ParentTypeName(EntityHandle parent) => parent.Kind switch
+    private string ParentTypeName(EntityHandle parent, GenericContext context) => parent.Kind switch
     {
         HandleKind.TypeReference => TypeReferenceName((TypeReferenceHandle)parent),
-        HandleKind.TypeDefinition => TypeName((TypeDefinitionHandle)parent),
-        HandleKind.TypeSpecification => ResolveTypeToken(parent).ToString(),
+        HandleKind.TypeDefinition => ClrTypeProvider.DefinitionName(Reader, (TypeDefinitionHandle)parent),
+        HandleKind.TypeSpecification => ResolveTypeToken(parent, context) switch
+        {
+            UnsupportedClrType u => u.Description,
+            var t => t.Display,
+        },
         _ => "<unsupported parent>",
     };
 
@@ -769,14 +982,6 @@ internal sealed class TranslationContext
     {
         TypeReference reference = Reader.GetTypeReference(handle);
         return ClrTypeProvider.FullName(Reader, reference.Namespace, reference.Name);
-    }
-
-    private string TypeName(TypeDefinitionHandle handle)
-    {
-        TypeDefinition type = Reader.GetTypeDefinition(handle);
-        string name = ClrTypeProvider.FullName(Reader, type.Namespace, type.Name);
-        TypeDefinitionHandle declaring = type.GetDeclaringType();
-        return declaring.IsNil ? name : $"{TypeName(declaring)}+{name}";
     }
 
     private string UniqueName(string name)

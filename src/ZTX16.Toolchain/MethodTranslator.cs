@@ -25,13 +25,16 @@ internal sealed class MethodTranslator
     private bool _reachable = true;
     private int _offset;
     private int? _switchTemp;
+    private readonly GenericContext _generic;
 
-    public MethodTranslator(TranslationContext context, MethodDefinition method, FunctionBuilder function, MethodSignature<ClrType> signature)
+    public MethodTranslator(TranslationContext context, MethodDefinition method, GenericContext generic, FunctionBuilder function)
     {
         _context = context;
         _method = method;
+        _generic = generic;
         _function = function;
         _name = function.Name;
+        MethodSignature<ClrType> signature = method.DecodeSignature(context.TypeProvider, generic);
         IEnumerable<VmTypeInfo> args = signature.ParameterTypes.Select((t, i) => ClrTypeMapping.MapValue(t, $"{_name} parameter {i}"));
         _args = (method.IsStatic() ? args : args.Prepend(new VmTypeInfo(VmType.Ref, null))).ToArray(); // IL arg 0 is 'this'
         _returnType = signature.ReturnType;
@@ -53,7 +56,7 @@ internal sealed class MethodTranslator
         if (!body.LocalSignature.IsNil)
         {
             StandaloneSignature signature = _context.Reader.GetStandaloneSignature(body.LocalSignature);
-            _locals = signature.DecodeLocalSignature(_context.TypeProvider, null)
+            _locals = signature.DecodeLocalSignature(_context.TypeProvider, _generic)
                 .Select((t, i) => ClrTypeMapping.MapValue(t, $"{_name} local {i}"))
                 .ToArray();
             foreach (VmTypeInfo local in _locals)
@@ -76,8 +79,9 @@ internal sealed class MethodTranslator
             }
         }
 
-        foreach (IlInstruction instruction in instructions)
+        for (int i = 0; i < instructions.Count; i++)
         {
+            IlInstruction instruction = instructions[i];
             _offset = instruction.Offset;
             if (_labels.TryGetValue(instruction.Offset, out Label label))
             {
@@ -87,6 +91,31 @@ internal sealed class MethodTranslator
             else if (!_reachable)
             {
                 continue; // dead code that no branch reaches
+            }
+
+            // default(T) idiom: ldloca V; initobj T  →  V = zero
+            if (instruction.OpCode is ILOpCode.Ldloca or ILOpCode.Ldloca_s
+                && i + 1 < instructions.Count && instructions[i + 1].OpCode == ILOpCode.Initobj
+                && !_labels.ContainsKey(instructions[i + 1].Offset))
+            {
+                ZeroLocal((int)instruction.Operand);
+                i++;
+                continue;
+            }
+
+            // primitive.ToString() idiom: ldloca/ldarga/ldflda/ldsflda; call T::ToString()  →  load; ToText
+            if (instruction.OpCode is ILOpCode.Ldloca or ILOpCode.Ldloca_s or ILOpCode.Ldarga or ILOpCode.Ldarga_s
+                    or ILOpCode.Ldflda or ILOpCode.Ldsflda
+                && i + 1 < instructions.Count && instructions[i + 1].OpCode == ILOpCode.Call
+                && !_labels.ContainsKey(instructions[i + 1].Offset)
+                && _context.PrimitiveToString(MetadataTokens.EntityHandle((int)instructions[i + 1].Operand)) is { } format)
+            {
+                LoadByAddressInstruction(instruction);
+                _function.Emit(OpCode.ToText, (int)format);
+                PopAny();
+                Push(VmType.Ref);
+                i++;
+                continue;
             }
 
             TranslateInstruction(instruction);
@@ -268,7 +297,7 @@ internal sealed class MethodTranslator
 
             case ILOpCode.Newobj:
                 {
-                    (VmSignature ctor, Action<FunctionBuilder> emit) = _context.ResolveNew(MetadataTokens.EntityHandle((int)ins.Operand), Where);
+                    (VmSignature ctor, Action<FunctionBuilder> emit) = _context.ResolveNew(MetadataTokens.EntityHandle((int)ins.Operand), _generic, Where);
                     for (int i = ctor.Parameters.Count - 1; i >= 1; i--)
                     {
                         Pop(ctor.Parameters[i], $"constructor argument {i - 1}");
@@ -286,7 +315,7 @@ internal sealed class MethodTranslator
 
             case ILOpCode.Ldfld:
                 {
-                    (int index, VmTypeInfo type) = _context.GetInstanceField(MetadataTokens.EntityHandle((int)ins.Operand), Where);
+                    (int index, VmTypeInfo type) = _context.GetInstanceField(MetadataTokens.EntityHandle((int)ins.Operand), _generic, Where);
                     Pop(VmType.Ref, "field owner");
                     _function.Emit(OpCode.LoadField, index);
                     Push(type.Type!.Value);
@@ -295,7 +324,7 @@ internal sealed class MethodTranslator
 
             case ILOpCode.Stfld:
                 {
-                    (int index, VmTypeInfo type) = _context.GetInstanceField(MetadataTokens.EntityHandle((int)ins.Operand), Where);
+                    (int index, VmTypeInfo type) = _context.GetInstanceField(MetadataTokens.EntityHandle((int)ins.Operand), _generic, Where);
                     Pop(type.Type!.Value, "field value");
                     Pop(VmType.Ref, "field owner");
                     EmitNarrow(type);
@@ -307,7 +336,7 @@ internal sealed class MethodTranslator
             case ILOpCode.Isinst:
                 {
                     Pop(VmType.Ref, "cast operand");
-                    if (_context.ClassForTypeTest(MetadataTokens.EntityHandle((int)ins.Operand), Where) is { } target)
+                    if (_context.ClassForTypeTest(MetadataTokens.EntityHandle((int)ins.Operand), _generic, Where) is { } target)
                     {
                         _function.Emit(op == ILOpCode.Castclass ? OpCode.CastClass : OpCode.IsInstance, target.Builder.Index);
                     }
@@ -318,7 +347,7 @@ internal sealed class MethodTranslator
 
             case ILOpCode.Newarr:
                 {
-                    ClrType element = _context.ResolveTypeToken(MetadataTokens.EntityHandle((int)ins.Operand));
+                    ClrType element = _context.ResolveTypeToken(MetadataTokens.EntityHandle((int)ins.Operand), _generic);
                     VmElementAccess access = ClrTypeMapping.ElementAccess(element, Where);
                     Pop(VmType.I32, "array length");
                     _function.Emit(OpCode.NewArray, (int)VmTypes.StorageOf(access));
@@ -342,7 +371,7 @@ internal sealed class MethodTranslator
             case ILOpCode.Ldelem_r8: LoadElement(VmElementAccess.F64); return;
             case ILOpCode.Ldelem_ref: LoadElement(VmElementAccess.Ref); return;
             case ILOpCode.Ldelem:
-                LoadElement(ClrTypeMapping.ElementAccess(_context.ResolveTypeToken(MetadataTokens.EntityHandle((int)ins.Operand)), Where));
+                LoadElement(ClrTypeMapping.ElementAccess(_context.ResolveTypeToken(MetadataTokens.EntityHandle((int)ins.Operand), _generic), Where));
                 return;
 
             case ILOpCode.Stelem_i1: StoreElement(VmElementAccess.I8); return;
@@ -353,7 +382,7 @@ internal sealed class MethodTranslator
             case ILOpCode.Stelem_r8: StoreElement(VmElementAccess.F64); return;
             case ILOpCode.Stelem_ref: StoreElement(VmElementAccess.Ref); return;
             case ILOpCode.Stelem:
-                StoreElement(ClrTypeMapping.ElementAccess(_context.ResolveTypeToken(MetadataTokens.EntityHandle((int)ins.Operand)), Where));
+                StoreElement(ClrTypeMapping.ElementAccess(_context.ResolveTypeToken(MetadataTokens.EntityHandle((int)ins.Operand), _generic), Where));
                 return;
 
             case ILOpCode.Ldstr:
@@ -363,7 +392,7 @@ internal sealed class MethodTranslator
 
             case ILOpCode.Ldsfld:
                 {
-                    (int index, VmTypeInfo type) = _context.GetGlobal(MetadataTokens.EntityHandle((int)ins.Operand), Where);
+                    (int index, VmTypeInfo type) = _context.GetGlobal(MetadataTokens.EntityHandle((int)ins.Operand), _generic, Where);
                     _function.Emit(OpCode.LoadGlobal, index);
                     Push(type.Type!.Value);
                     return;
@@ -371,7 +400,7 @@ internal sealed class MethodTranslator
 
             case ILOpCode.Stsfld:
                 {
-                    (int index, VmTypeInfo type) = _context.GetGlobal(MetadataTokens.EntityHandle((int)ins.Operand), Where);
+                    (int index, VmTypeInfo type) = _context.GetGlobal(MetadataTokens.EntityHandle((int)ins.Operand), _generic, Where);
                     Pop(type.Type!.Value);
                     EmitNarrow(type);
                     _function.Emit(OpCode.StoreGlobal, index);
@@ -424,6 +453,51 @@ internal sealed class MethodTranslator
         int slot = CheckLocal(index);
         Pop(_locals[index].Type!.Value);
         EmitNarrow(_locals[index]);
+        _function.Emit(OpCode.StoreLocal, slot);
+    }
+
+    /// <summary>Loads the value whose address an ldloca/ldarga/ldflda/ldsflda instruction would take.</summary>
+    private void LoadByAddressInstruction(IlInstruction ins)
+    {
+        switch (ins.OpCode)
+        {
+            case ILOpCode.Ldloca or ILOpCode.Ldloca_s:
+                LoadLocal((int)ins.Operand);
+                break;
+            case ILOpCode.Ldarga or ILOpCode.Ldarga_s:
+                LoadArg((int)ins.Operand);
+                break;
+            case ILOpCode.Ldflda:
+                {
+                    (int index, VmTypeInfo type) = _context.GetInstanceField(MetadataTokens.EntityHandle((int)ins.Operand), _generic, Where);
+                    Pop(VmType.Ref, "field owner");
+                    _function.Emit(OpCode.LoadField, index);
+                    Push(type.Type!.Value);
+                    break;
+                }
+
+            default:
+                {
+                    (int index, VmTypeInfo type) = _context.GetGlobal(MetadataTokens.EntityHandle((int)ins.Operand), _generic, Where);
+                    _function.Emit(OpCode.LoadGlobal, index);
+                    Push(type.Type!.Value);
+                    break;
+                }
+        }
+    }
+
+    private void ZeroLocal(int index)
+    {
+        int slot = CheckLocal(index);
+        switch (_locals[index].Type)
+        {
+            case VmType.I32: _function.ConstI32(0); break;
+            case VmType.I64: _function.ConstI64(0); break;
+            case VmType.F32: _function.ConstF32(0); break;
+            case VmType.F64: _function.ConstF64(0); break;
+            default: _function.Emit(OpCode.ConstNull); break;
+        }
+
         _function.Emit(OpCode.StoreLocal, slot);
     }
 
@@ -779,7 +853,7 @@ internal sealed class MethodTranslator
 
     private void Call(EntityHandle target, bool virtualCall)
     {
-        (VmSignature signature, Action<FunctionBuilder> emit) = _context.ResolveCall(target, virtualCall, Where);
+        (VmSignature signature, Action<FunctionBuilder> emit) = _context.ResolveCall(target, virtualCall, _generic, Where);
         for (int i = signature.Parameters.Count - 1; i >= 0; i--)
         {
             Pop(signature.Parameters[i], $"argument {i}");

@@ -161,3 +161,49 @@ Project → Cartridge build (resources, Project Config, packed cartridge) is the
 - Correctness: differential tests for virtual dispatch, interfaces, type tests, arrays, strings and linked
   structures, plus GC tests where the only reference to a live object is in a caller's local, on a
   caller's operand stack, or in a static array while several collections run (`HeapTests`).
+
+## VM-4 — generics and collections
+
+### Generics
+
+- **Monomorphization.** The toolchain translates a separate copy of every generic class, interface and
+  method for each distinct set of type arguments it reaches (`List<int>` and `List<string>` are different
+  VM classes with different code). The VM itself has no notion of generics.
+- Supported: generic classes and interfaces, generic static and instance methods, nested generic types,
+  static fields per instantiation (each with its own static constructor), generic arguments of any
+  supported type, `default(T)` in locals.
+- Not supported yet: generic virtual methods, `default(T)` written directly into a field or array
+  element address, constraints-based calls on `T` (`T.Equals`, `T.ToString` through `constrained.`).
+
+### Core library: ZTX16.Collections
+
+- `List<T>`, `Dictionary<TKey,TValue>`, `HashSet<T>`, `Stack<T>`, `Queue<T>` in `src/ZTX16.Core`, written in
+  the supported subset of C#.
+- **Shipped as source**: the cartridge build compiles `src/ZTX16.Core/**/*.cs` into every cartridge, so the
+  library is translated (and monomorphized) together with cartridge code and the translator still works on
+  a single assembly. Only what a cartridge reaches is translated.
+- BCL collections (`System.Collections.Generic.*`) are not available; the toolchain points to the ZTX16
+  equivalents. Do not import both namespaces in one file (ambiguous names).
+- Misuse (index out of range, missing key, duplicate key, empty stack/queue) stops the cartridge with a
+  clear message through `Intrinsics.Fail`, i.e. a VM trap.
+- `Dictionary` keys compare by value for numbers and strings and by identity for other objects.
+  `Keys`/`Values` return entries in insertion order (freed slots are reused). `TryGetValue` is not
+  available yet (no `out` parameters); use `GetValueOrDefault` or `ContainsKey`.
+- `foreach` over `List<T>` uses a class enumerator (no `IDisposable`, so no `try/finally`).
+- Collections implement `System.Collections.IEnumerable` only so C# allows collection initializers; the
+  toolchain ignores that interface.
+
+### VM additions
+
+- `Hash` (numbers by value, strings by FNV-1a content hash, other references by identity), `ValueEquals`,
+  `Trap` (stop with a message), `ToText` (`ToString()` of numbers, `char`, `bool`, invariant culture),
+  `StringConcatArray`.
+- **The interpreter is no longer recursive.** VM calls push frames onto explicit arrays, so VM call depth
+  (limit 256) never consumes the host's stack. Found when the larger interpreter frame overflowed the
+  test thread's stack.
+
+### Language version
+
+Cartridges compile with **C# 12** (`LangVersion` in the cartridge targets). From C# 13 on, calls such as
+`string.Concat` with five or more parts bind to `params ReadOnlySpan<T>` overloads built on inline-array
+structs, which the VM does not support; C# 12 uses arrays.

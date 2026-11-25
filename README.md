@@ -25,7 +25,7 @@ dotnet run --project src/ZTX16.Host -- --exe samples/HelloSquare/bin/Debug/net10
 
 HelloSquare: arrows / WASD / D-pad / left stick move the square, Space toggles the scrolling background, Escape exits.
 
-A cartridge is one class implementing `ZTX16.ICartridge` (`Initialize`, `Tick`, `Render`, optional `Deinitialize`). The toolchain supports numeric types, `bool`, `char`, enums, classes with inheritance and virtual methods, interfaces, arrays, strings and null, on a garbage-collected heap. Structs, generics (`List<T>`), lambdas and exceptions are not supported yet and are reported as build errors.
+A cartridge is one class implementing `ZTX16.ICartridge` (`Initialize`, `Tick`, `Render`, optional `Deinitialize`). The toolchain supports numeric types, `bool`, `char`, enums, classes with inheritance and virtual methods, interfaces, generics, arrays, strings (including `ToString()` of numbers) and null, on a garbage-collected heap. Collections come from `ZTX16.Collections` (`List<T>`, `Dictionary<K,V>`, `HashSet<T>`, `Stack<T>`, `Queue<T>`). Structs, lambdas, exceptions and `out` parameters are not supported yet and are reported as build errors.
 
 ## Host options
 
@@ -48,6 +48,7 @@ Diagnostic program: arrows / WASD / D-pad / left stick move the square (its heig
 - `src/ZTX16.VM` — executable format, verifier, interpreter.
 - `src/ZTX16.Abi` — reads the ABI from the SDK for runtime and toolchain.
 - `src/ZTX16.Platform` — runtime subsystems (`ZTX16.Platform.*`); no host dependencies.
+- `src/ZTX16.Core` — core library (`ZTX16.Collections`), compiled into every cartridge as source.
 - `src/ZTX16.Toolchain` — `ztx16c`, IL → ZTX16 translator, and cartridge build targets.
 - `src/ZTX16.Host` — SDL3 reference host.
 - `samples/` — example cartridges.

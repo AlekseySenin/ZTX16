@@ -54,6 +54,8 @@ public sealed class VmInstance
     private readonly int[] _frameFunction = new int[MaxCallDepth + 2];
     private readonly int[] _frameBase = new int[MaxCallDepth + 2];
     private readonly int[] _framePc = new int[MaxCallDepth + 2];
+    private readonly int[] _frameResumePc = new int[MaxCallDepth + 2];
+    private readonly long[] _frameConstructed = new long[MaxCallDepth + 2];
     private long _budget = long.MaxValue;
     private int _depth;
 
@@ -141,28 +143,46 @@ public sealed class VmInstance
         }
     }
 
-    private void Execute(int functionIndex, int frameBase)
+    /// <summary>
+    /// Pushes a call frame for <paramref name="functionIndex"/> whose parameters already occupy the
+    /// slots starting at <paramref name="frameBase"/>. Returns the frame's initial operand stack pointer.
+    /// </summary>
+    private int PushFrame(int functionIndex, int frameBase, long constructedObject)
     {
         VmFunction function = _functions[functionIndex];
-        int localCount = function.LocalCount;
-        int sp = frameBase + localCount;
-
-        if (++_depth > MaxCallDepth)
+        if (_depth + 1 > MaxCallDepth)
         {
             throw new VmTrapException("Call stack overflow", function.Name, 0);
         }
 
-        int frame = _depth;
-        _frameFunction[frame] = functionIndex;
-        _frameBase[frame] = frameBase;
-
+        int sp = frameBase + function.LocalCount;
         if (sp + _verified.MaxStack[functionIndex] > _stack.Length)
         {
             throw new VmTrapException("Value stack overflow", function.Name, 0);
         }
 
+        int frame = ++_depth;
+        _frameFunction[frame] = functionIndex;
+        _frameBase[frame] = frameBase;
+        _frameConstructed[frame] = constructedObject;
+
         // Parameters were placed by the caller; extra locals start zeroed.
         Array.Clear(_stack, frameBase + function.Signature.Parameters.Count, function.Locals.Count);
+        return sp;
+    }
+
+    /// <summary>
+    /// Runs <paramref name="entryFunction"/> to completion. The interpreter is not recursive: VM calls
+    /// push frames onto explicit frame arrays, so VM call depth never consumes the host stack.
+    /// </summary>
+    private void Execute(int entryFunction, int entryBase)
+    {
+        int entryDepth = _depth;
+        int functionIndex = entryFunction;
+        int frameBase = entryBase;
+        int sp = PushFrame(functionIndex, frameBase, 0);
+        int frame = _depth;
+        VmFunction function = _functions[functionIndex];
 
         long[] s = _stack;
         ReadOnlySpan<byte> code = function.Code;
@@ -410,51 +430,52 @@ public sealed class VmInstance
                     break;
 
                 case OpCode.Call:
-                    {
-                        _framePc[frame] = start;
-                        int callee = ReadU16(code, ref pc);
-                        VmSignature signature = _functions[callee].Signature;
-                        int calleeBase = sp - signature.Parameters.Count;
-                        Execute(callee, calleeBase);
-                        sp = calleeBase + (signature.Result is null ? 0 : 1);
-                        break;
-                    }
-
                 case OpCode.CallVirtual:
-                    {
-                        _framePc[frame] = start;
-                        int selector = ReadU16(code, ref pc);
-                        VmSignature signature = Module.Selectors[selector].Signature;
-                        int calleeBase = sp - signature.Parameters.Count;
-                        InstanceObject receiver = Instance(s[calleeBase], function, start);
-                        if (!Module.Classes[receiver.Class].Methods.TryGetValue(selector, out int callee))
-                        {
-                            throw new VmTrapException(
-                                $"Class '{Module.Classes[receiver.Class].Name}' has no implementation of '{Module.Selectors[selector].Name}'",
-                                function.Name,
-                                start);
-                        }
-
-                        Execute(callee, calleeBase);
-                        sp = calleeBase + (signature.Result is null ? 0 : 1);
-                        break;
-                    }
-
                 case OpCode.New:
                     {
                         _framePc[frame] = start;
-                        int classIndex = ReadU16(code, ref pc);
-                        int constructor = ReadU16(code, ref pc);
-                        int argCount = _functions[constructor].Signature.Parameters.Count - 1;
-                        long handle = Allocate(new InstanceObject(classIndex, Module.Classes[classIndex].Fields.Count), function, start);
+                        int callee;
+                        int calleeBase;
+                        long constructed = 0;
+                        if (op == OpCode.Call)
+                        {
+                            callee = ReadU16(code, ref pc);
+                            calleeBase = sp - _functions[callee].Signature.Parameters.Count;
+                        }
+                        else if (op == OpCode.CallVirtual)
+                        {
+                            int selector = ReadU16(code, ref pc);
+                            calleeBase = sp - Module.Selectors[selector].Signature.Parameters.Count;
+                            InstanceObject receiver = Instance(s[calleeBase], function, start);
+                            if (!Module.Classes[receiver.Class].Methods.TryGetValue(selector, out callee))
+                            {
+                                throw new VmTrapException(
+                                    $"Class '{Module.Classes[receiver.Class].Name}' has no implementation of '{Module.Selectors[selector].Name}'",
+                                    function.Name,
+                                    start);
+                            }
+                        }
+                        else
+                        {
+                            int classIndex = ReadU16(code, ref pc);
+                            callee = ReadU16(code, ref pc);
+                            int argCount = _functions[callee].Signature.Parameters.Count - 1;
+                            constructed = Allocate(new InstanceObject(classIndex, Module.Classes[classIndex].Fields.Count), function, start);
 
-                        // Insert the new object below the constructor arguments as 'this'.
-                        int calleeBase = sp - argCount;
-                        Array.Copy(s, calleeBase, s, calleeBase + 1, argCount);
-                        s[calleeBase] = handle;
-                        Execute(constructor, calleeBase);
-                        s[calleeBase] = handle;
-                        sp = calleeBase + 1;
+                            // Insert the new object below the constructor arguments as 'this'.
+                            calleeBase = sp - argCount;
+                            System.Array.Copy(s, calleeBase, s, calleeBase + 1, argCount);
+                            s[calleeBase] = constructed;
+                        }
+
+                        _frameResumePc[frame] = pc;
+                        sp = PushFrame(callee, calleeBase, constructed);
+                        frame = _depth;
+                        functionIndex = callee;
+                        frameBase = calleeBase;
+                        function = _functions[callee];
+                        code = function.Code;
+                        pc = 0;
                         break;
                     }
 
@@ -573,6 +594,76 @@ public sealed class VmInstance
                         break;
                     }
 
+                case OpCode.Hash:
+                    {
+                        var type = (VmType)ReadU16(code, ref pc);
+                        long v = s[sp - 1];
+                        s[sp - 1] = type switch
+                        {
+                            VmType.I32 or VmType.F32 => I32(v),
+                            VmType.I64 or VmType.F64 => unchecked((int)v ^ (int)(v >> 32)),
+                            _ => v == 0 ? 0 : _heap.Get(v) is StringObject str ? StableStringHash(str.Value) : unchecked((int)v * -1640531535),
+                        };
+                        break;
+                    }
+
+                case OpCode.ValueEquals:
+                    {
+                        sp--;
+                        long a = s[sp - 1], b = s[sp];
+                        s[sp - 1] = B(a == b
+                            || (a != 0 && b != 0 && _heap.Get(a) is StringObject sa && _heap.Get(b) is StringObject sb && sa.Value == sb.Value));
+                        break;
+                    }
+
+                case OpCode.ToText:
+                    {
+                        _framePc[frame] = start;
+                        var kind = (VmFormatKind)ReadU16(code, ref pc);
+                        long v = s[sp - 1];
+                        var invariant = System.Globalization.CultureInfo.InvariantCulture;
+                        string text = kind switch
+                        {
+                            VmFormatKind.Int32 => I32(v).ToString(invariant),
+                            VmFormatKind.UInt32 => ((uint)I32(v)).ToString(invariant),
+                            VmFormatKind.Int64 => v.ToString(invariant),
+                            VmFormatKind.UInt64 => ((ulong)v).ToString(invariant),
+                            VmFormatKind.Single => F32(v).ToString(invariant),
+                            VmFormatKind.Double => F64(v).ToString(invariant),
+                            VmFormatKind.Char => ((char)I32(v)).ToString(),
+                            _ => I32(v) != 0 ? "True" : "False",
+                        };
+                        s[sp - 1] = Allocate(new StringObject(text), function, start);
+                        break;
+                    }
+
+                case OpCode.Trap:
+                    {
+                        long message = s[--sp];
+                        throw new VmTrapException(message != 0 && _heap.Get(message) is StringObject m ? m.Value : "Trap", function.Name, start);
+                    }
+
+                case OpCode.StringConcatArray:
+                    {
+                        _framePc[frame] = start;
+                        if (Deref(s[sp - 1], function, start) is not ArrayObject { Kind: VmArrayKind.Ref } parts)
+                        {
+                            throw new VmTrapException("Not an array of strings", function.Name, start);
+                        }
+
+                        var builder = new System.Text.StringBuilder();
+                        foreach (long part in (long[])parts.Data)
+                        {
+                            if (part != 0)
+                            {
+                                builder.Append(StringOf(part, function, start));
+                            }
+                        }
+
+                        s[sp - 1] = Allocate(new StringObject(builder.ToString()), function, start);
+                        break;
+                    }
+
                 case OpCode.StringEquals:
                     {
                         sp--;
@@ -608,13 +699,40 @@ public sealed class VmInstance
                     }
 
                 case OpCode.Return:
-                    if (function.Signature.Result is not null)
                     {
-                        s[frameBase] = s[sp - 1];
-                    }
+                        bool hasResult = function.Signature.Result is not null;
+                        if (hasResult)
+                        {
+                            s[frameBase] = s[sp - 1];
+                        }
 
-                    _depth--;
-                    return;
+                        long constructed = _frameConstructed[frame];
+                        int returnedBase = frameBase;
+                        _depth--;
+                        if (_depth == entryDepth)
+                        {
+                            return;
+                        }
+
+                        // Resume the caller.
+                        frame = _depth;
+                        functionIndex = _frameFunction[frame];
+                        frameBase = _frameBase[frame];
+                        function = _functions[functionIndex];
+                        code = function.Code;
+                        pc = _frameResumePc[frame];
+                        if (constructed != 0)
+                        {
+                            s[returnedBase] = constructed; // 'new' leaves the object on the caller's stack
+                            sp = returnedBase + 1;
+                        }
+                        else
+                        {
+                            sp = returnedBase + (hasResult ? 1 : 0);
+                        }
+
+                        break;
+                    }
 
                 default:
                     // Unreachable for verified code.
@@ -624,6 +742,18 @@ public sealed class VmInstance
     }
 
     // ---- heap ---------------------------------------------------------------------------
+
+    // FNV-1a over UTF-16 code units: deterministic across runs and hosts, unlike string.GetHashCode.
+    private static int StableStringHash(string value)
+    {
+        uint hash = 2166136261;
+        foreach (char c in value)
+        {
+            hash = unchecked((hash ^ c) * 16777619);
+        }
+
+        return unchecked((int)hash);
+    }
 
     private long Allocate(HeapObject obj, VmFunction function, int offset)
     {

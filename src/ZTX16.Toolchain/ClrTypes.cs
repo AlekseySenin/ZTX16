@@ -18,8 +18,38 @@ internal sealed record PrimitiveClrType(PrimitiveTypeCode Code) : ClrType(Code.T
 /// <summary>An enum, represented by its underlying primitive type.</summary>
 internal sealed record EnumClrType(string FullName, PrimitiveTypeCode Underlying) : ClrType(FullName);
 
-/// <summary>A class or interface defined in the cartridge.</summary>
-internal sealed record ClassClrType(TypeDefinitionHandle Handle, string FullName, bool IsInterface) : ClrType(FullName);
+/// <summary>
+/// A class or interface defined in the cartridge, possibly a generic instantiation. Generic
+/// definitions without arguments are "open"; the translator only instantiates closed ones.
+/// </summary>
+internal sealed record ClassClrType(TypeDefinitionHandle Handle, string FullName, bool IsInterface, ImmutableArray<ClrType> TypeArgs)
+    : ClrType(TypeArgs.IsDefaultOrEmpty ? FullName : $"{FullName}<{string.Join(",", TypeArgs)}>")
+{
+    /// <summary>Generic context for members of this type.</summary>
+    public GenericContext Context => new(TypeArgs.IsDefault ? [] : TypeArgs, []);
+
+    /// <summary>
+    /// The same definition with <paramref name="typeArgs"/>. Always use this instead of a
+    /// <c>with</c> expression: <see cref="ClrType.Display"/> is computed at construction.
+    /// </summary>
+    public ClassClrType Instantiate(ImmutableArray<ClrType> typeArgs) => new(Handle, FullName, IsInterface, typeArgs);
+}
+
+/// <summary>An unresolved generic parameter (only seen when decoding without a context).</summary>
+internal sealed record GenericParameterClrType(int Index, bool IsMethodParameter) : ClrType(IsMethodParameter ? $"!!{Index}" : $"!{Index}");
+
+/// <summary>Type arguments in effect while decoding signatures and tokens.</summary>
+internal sealed record GenericContext(ImmutableArray<ClrType> TypeArgs, ImmutableArray<ClrType> MethodArgs)
+{
+    /// <summary>No generic arguments.</summary>
+    public static GenericContext Empty { get; } = new([], []);
+
+    /// <summary>Canonical text form, used in keys and names.</summary>
+    public string Key => $"{(TypeArgs.IsDefaultOrEmpty ? "" : $"<{string.Join(",", TypeArgs)}>")}{(MethodArgs.IsDefaultOrEmpty ? "" : $"[{string.Join(",", MethodArgs)}]")}";
+
+    /// <summary>Same type arguments, with method arguments.</summary>
+    public GenericContext WithMethodArgs(ImmutableArray<ClrType> methodArgs) => this with { MethodArgs = methodArgs };
+}
 
 /// <summary>An interface defined by the SDK (e.g. <c>ZTX16.ICartridge</c>).</summary>
 internal sealed record SdkInterfaceClrType(string FullName) : ClrType(FullName);
@@ -149,7 +179,7 @@ internal static class ClrTypeMapping
 /// its own metadata; SDK enums and interfaces by reflection over the SDK assembly; the
 /// handful of supported <c>System</c> types by name.
 /// </summary>
-internal sealed class ClrTypeProvider : ISignatureTypeProvider<ClrType, object?>
+internal sealed class ClrTypeProvider : ISignatureTypeProvider<ClrType, GenericContext?>
 {
     private const string SdkAssemblyName = "ZTX16.Sdk";
 
@@ -172,7 +202,7 @@ internal sealed class ClrTypeProvider : ISignatureTypeProvider<ClrType, object?>
         }
 
         TypeDefinition definition = reader.GetTypeDefinition(handle);
-        string fullName = FullName(reader, definition.Namespace, definition.Name);
+        string fullName = DefinitionName(reader, handle);
         string? baseName = BaseTypeName(reader, definition);
         ClrType result;
 
@@ -194,13 +224,9 @@ internal sealed class ClrTypeProvider : ISignatureTypeProvider<ClrType, object?>
         {
             result = new UnsupportedClrType($"struct {fullName}", "structs are not supported yet; use a class");
         }
-        else if (definition.GetGenericParameters().Count > 0)
-        {
-            result = new UnsupportedClrType(fullName, "generic types are not supported yet");
-        }
         else
         {
-            result = new ClassClrType(handle, fullName, (definition.Attributes & TypeAttributes.Interface) != 0);
+            result = new ClassClrType(handle, fullName, (definition.Attributes & TypeAttributes.Interface) != 0, []);
         }
 
         _definitionCache[handle] = result;
@@ -254,7 +280,7 @@ internal sealed class ClrTypeProvider : ISignatureTypeProvider<ClrType, object?>
         };
     }
 
-    public ClrType GetTypeFromSpecification(MetadataReader reader, object? genericContext, TypeSpecificationHandle handle, byte rawTypeKind) =>
+    public ClrType GetTypeFromSpecification(MetadataReader reader, GenericContext? genericContext, TypeSpecificationHandle handle, byte rawTypeKind) =>
         reader.GetTypeSpecification(handle).DecodeSignature(this, genericContext);
 
     public ClrType GetSZArrayType(ClrType elementType) => new ArrayClrType(elementType);
@@ -274,14 +300,41 @@ internal sealed class ClrTypeProvider : ISignatureTypeProvider<ClrType, object?>
     public ClrType GetFunctionPointerType(MethodSignature<ClrType> signature) =>
         new UnsupportedClrType("function pointer", "pointers are not part of the ZTX16 model");
 
-    public ClrType GetGenericInstantiation(ClrType genericType, ImmutableArray<ClrType> typeArguments) =>
-        new UnsupportedClrType($"{genericType}<{string.Join(", ", typeArguments)}>", "generics are not supported yet");
+    public ClrType GetGenericInstantiation(ClrType genericType, ImmutableArray<ClrType> typeArguments)
+    {
+        if (typeArguments.FirstOrDefault(a => a is UnsupportedClrType) is UnsupportedClrType badArgument)
+        {
+            return new UnsupportedClrType($"{genericType}<{string.Join(",", typeArguments)}>", badArgument.Reason);
+        }
 
-    public ClrType GetGenericMethodParameter(object? genericContext, int index) =>
-        new UnsupportedClrType($"!!{index}", "generics are not supported yet");
+        return genericType switch
+        {
+            ClassClrType c => c.Instantiate(typeArguments),
+            UnsupportedClrType u when u.Description.StartsWith("System.Collections.Generic.", StringComparison.Ordinal) =>
+                new UnsupportedClrType(u.Description, $"use the ZTX16.Collections equivalent instead of {u.Description}"),
+            UnsupportedClrType u => new UnsupportedClrType($"{u.Description}<{string.Join(",", typeArguments)}>", u.Reason),
+            _ => new UnsupportedClrType($"{genericType}<{string.Join(",", typeArguments)}>", "only cartridge generic types can be instantiated"),
+        };
+    }
 
-    public ClrType GetGenericTypeParameter(object? genericContext, int index) =>
-        new UnsupportedClrType($"!{index}", "generics are not supported yet");
+    public ClrType GetGenericMethodParameter(GenericContext? genericContext, int index) =>
+        genericContext is { MethodArgs.IsDefaultOrEmpty: false } ctx && index < ctx.MethodArgs.Length
+            ? ctx.MethodArgs[index]
+            : new GenericParameterClrType(index, IsMethodParameter: true);
+
+    public ClrType GetGenericTypeParameter(GenericContext? genericContext, int index) =>
+        genericContext is { TypeArgs.IsDefaultOrEmpty: false } ctx && index < ctx.TypeArgs.Length
+            ? ctx.TypeArgs[index]
+            : new GenericParameterClrType(index, IsMethodParameter: false);
+
+    /// <summary>Full name of a type definition, with nesting written as <c>Outer+Inner</c>.</summary>
+    public static string DefinitionName(MetadataReader reader, TypeDefinitionHandle handle)
+    {
+        TypeDefinition type = reader.GetTypeDefinition(handle);
+        string name = FullName(reader, type.Namespace, type.Name);
+        TypeDefinitionHandle declaring = type.GetDeclaringType();
+        return declaring.IsNil ? name : $"{DefinitionName(reader, declaring)}+{name}";
+    }
 
     public static string FullName(MetadataReader reader, StringHandle ns, StringHandle name)
     {

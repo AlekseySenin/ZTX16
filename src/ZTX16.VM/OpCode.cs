@@ -276,6 +276,52 @@ public enum OpCode : byte
     StringConcat = 0xB2,
     /// <summary>Pop two strings; push i32 1 if they are equal by value (null-safe).</summary>
     StringEquals = 0xB3,
+    /// <summary>Pop an array of strings; push their concatenation (null elements are empty).</summary>
+    StringConcatArray = 0xB4,
+
+    // Runtime support for generic collections
+    /// <summary>
+    /// Pop a value of the operand's <see cref="VmType"/>; push an i32 hash. Strings hash by content,
+    /// other references by identity. Operand: u16 type.
+    /// </summary>
+    Hash = 0xB8,
+    /// <summary>Pop two references; push i32 1 if they are the same object or two strings with equal content.</summary>
+    ValueEquals = 0xB9,
+    /// <summary>Pop a string and trap with it as the message.</summary>
+    Trap = 0xBA,
+    /// <summary>
+    /// Pop a value and push its text (invariant culture, like .NET's <c>ToString()</c>).
+    /// Operand: u16 <see cref="VmFormatKind"/>.
+    /// </summary>
+    ToText = 0xBB,
+}
+
+/// <summary>How <see cref="OpCode.ToText"/> interprets its operand.</summary>
+public enum VmFormatKind : byte
+{
+    /// <summary>i32 as signed int.</summary>
+    Int32 = 1,
+
+    /// <summary>i32 as unsigned int.</summary>
+    UInt32 = 2,
+
+    /// <summary>i64 as signed long.</summary>
+    Int64 = 3,
+
+    /// <summary>i64 as unsigned long.</summary>
+    UInt64 = 4,
+
+    /// <summary>f32.</summary>
+    Single = 5,
+
+    /// <summary>f64.</summary>
+    Double = 6,
+
+    /// <summary>i32 as a UTF-16 char.</summary>
+    Char = 7,
+
+    /// <summary>i32 as bool ("True"/"False").</summary>
+    Boolean = 8,
 }
 
 /// <summary>Kind of immediate operand that follows an opcode.</summary>
@@ -328,7 +374,7 @@ internal static class OpCodeInfo
                     or OpCode.LoadField or OpCode.StoreField or OpCode.CallVirtual
                     or OpCode.IsInstance or OpCode.CastClass
                     or OpCode.NewArray or OpCode.LoadElement or OpCode.StoreElement
-                    or OpCode.LoadString => OperandKind.U16,
+                    or OpCode.LoadString or OpCode.Hash or OpCode.ToText => OperandKind.U16,
                 OpCode.New => OperandKind.U16Pair,
                 OpCode.Branch or OpCode.BranchIfTrue or OpCode.BranchIfFalse => OperandKind.BranchTarget,
                 _ => OperandKind.None,
