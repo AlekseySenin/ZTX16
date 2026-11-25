@@ -13,6 +13,7 @@ public sealed class ResourceStore
     private readonly Dictionary<string, ushort[]> _palettes = new(StringComparer.Ordinal);
     private readonly Dictionary<string, byte[]> _tilemaps = new(StringComparer.Ordinal);
     private readonly Dictionary<string, SpriteDefinition> _sprites = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, AnimationDefinition> _animations = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Graphics.RuntimeFont> _fonts = new(StringComparer.Ordinal);
 
     /// <summary>Creates a store from cartridge resources.</summary>
@@ -70,6 +71,22 @@ public sealed class ResourceStore
         SpriteDefinition sprite = SpriteFormat.Decode(data, name);
         _sprites[name] = sprite;
         return sprite;
+    }
+
+    /// <summary>An Animation resource definition.</summary>
+    /// <exception cref="ArgumentException">The animation does not exist.</exception>
+    public AnimationDefinition Animation(string name)
+    {
+        if (_animations.TryGetValue(name, out AnimationDefinition? cached))
+        {
+            return cached;
+        }
+
+        byte[] data = _data.GetValueOrDefault((ResourceType.Animation, name))
+            ?? throw new ArgumentException($"Animation resource '{name}' not found.");
+        AnimationDefinition animation = AnimationFormat.Decode(data, name);
+        _animations[name] = animation;
+        return animation;
     }
 
     /// <summary>A font ready for rendering. An empty name selects the built-in system font.</summary>

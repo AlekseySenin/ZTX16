@@ -185,6 +185,7 @@ public static class ResourceTypes
         ResourceType.Tilemap => ".png",
         ResourceType.Sprite => ".sprite",
         ResourceType.Font => ".font",
+        ResourceType.Animation => ".anim",
         _ => null,
     };
 }

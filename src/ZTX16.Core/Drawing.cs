@@ -145,6 +145,25 @@ public sealed class Sprite
         return new Sprite(Sprites.Tilemap(name), Sprites.Width(name), tiles);
     }
 
+    /// <summary>Number of tiles (Width × Height).</summary>
+    public int TileCount => _tiles.Length;
+
+    /// <summary>Changes the tile at <paramref name="index"/> (row-major, bottom row first), as animations address them.</summary>
+    public void SetTileAt(int index, int tileId)
+    {
+        if (index < 0 || index >= _tiles.Length)
+        {
+            Intrinsics.Fail("Sprite: tile index out of range");
+        }
+
+        if (tileId < 0 || tileId > 1023)
+        {
+            Intrinsics.Fail("Sprite: tile ID must be 0..1023");
+        }
+
+        _tiles[index] = tileId;
+    }
+
     /// <summary>Tile ID at grid position (x, y); (0, 0) is the lower-left tile.</summary>
     public int GetTile(int x, int y) => _tiles[Index(x, y)];
 

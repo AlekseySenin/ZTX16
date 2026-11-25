@@ -8,5 +8,7 @@
   <PropertyGroup>
     <RootNamespace>ZTX16</RootNamespace>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- Cartridges compile these sources without implicit usings; so does this project. -->
+    <ImplicitUsings>disable</ImplicitUsings>
   </PropertyGroup>
 </Project>

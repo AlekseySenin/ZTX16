@@ -4,10 +4,10 @@ using ZTX16.Collections;
 namespace HelloSquare;
 
 /// <summary>
-/// Sample cartridge: a ship sprite (from the "art" tilemap) moved with the arrow keys, WASD, the D-pad or the left
-/// stick and rotated to face its direction, over a scrolling two-screen background, leaving a trail kept in a Queue,
-/// with text in the built-in font. Space toggles the background layer, P cycles through the Palette resources of the
-/// cartridge, Escape exits.
+/// Sample cartridge: a ship sprite (from the "art" tilemap) with an animated engine flame, moved with the arrow keys,
+/// WASD, the D-pad or the left stick, rotated to face its direction and stopped by walls (collision), over a scrolling
+/// two-screen background, leaving a trail kept in a Queue, with text in the built-in font. Space toggles the background
+/// layer, P cycles through the Palette resources, C shows the colliders, Escape exits.
 /// </summary>
 public sealed class Game : ICartridge
 {
@@ -26,12 +26,22 @@ public sealed class Game : ICartridge
     private int palette;
     private Sprite? ship;
     private float heading;
+    private AnimationPlayback? engine;
+    private readonly ColliderSet walls = new();
+    private readonly Collider shipCollider = new(120, 120, Size, Size);
+    private bool showColliders;
+    private bool touching;
 
     public void Initialize()
     {
         if (Resources.Exists(ResourceType.Sprite, "ship"))
         {
             ship = Sprite.Load("ship");
+            if (Resources.Exists(ResourceType.Animation, "engine"))
+            {
+                engine = new AnimationPlayback(Animation.Load("engine"), ship);
+                engine.Play();
+            }
         }
 
         if (Resources.Exists(ResourceType.Palette, "default"))
@@ -55,6 +65,16 @@ public sealed class Game : ICartridge
         Graphics.FillRect(Markers, 0, 0, 4, 24, 7);
         Graphics.FillRect(Markers, 232, 252, 24, 4, 19);
         Graphics.FillRect(Markers, 252, 232, 4, 24, 19);
+
+        // Walls: drawn once, and the same rectangles are colliders.
+        walls.Add(new Collider(40, 60, 12, 120));
+        walls.Add(new Collider(170, 40, 40, 12));
+        walls.Add(new Collider(150, 170, 60, 12));
+        for (int i = 0; i < walls.Count; i++)
+        {
+            Collider wall = walls[i];
+            Graphics.FillRect(Markers, wall.X, wall.Y, wall.Width, wall.Height, 27);
+        }
     }
 
     public void Tick()
@@ -76,9 +96,25 @@ public sealed class Game : ICartridge
             Graphics.UsePalette(Resources.Name(ResourceType.Palette, palette));
         }
 
+        if (Input.WasKeyPressed(Key.C))
+        {
+            showColliders = !showColliders;
+        }
+
         int dx = Horizontal(), dy = Vertical();
-        x = Clamp(x + dx * Speed, 0, Graphics.ScreenSize - Size);
-        y = Clamp(y + dy * Speed, 0, Graphics.ScreenSize - Size);
+        int targetX = Clamp(x + dx * Speed, 0, Graphics.ScreenSize - Size);
+        int targetY = Clamp(y + dy * Speed, 0, Graphics.ScreenSize - Size);
+
+        // Collision only answers the question; the game decides what to do. Moving one axis at a time and stopping
+        // at the safe position lets the ship slide along a wall.
+        CollisionHit hitX = Collision.Move(shipCollider, targetX, y, walls);
+        x = hitX.SafeX;
+        shipCollider.SetPosition(x, y);
+        CollisionHit hitY = Collision.Move(shipCollider, x, targetY, walls);
+        y = hitY.SafeY;
+        shipCollider.SetPosition(x, y);
+        touching = hitX.Hit || hitY.Hit;
+        engine?.Update();
 
         // The ship points up at 0°; rotation is counter-clockwise.
         if (dx != 0 || dy != 0)
@@ -125,9 +161,15 @@ public sealed class Game : ICartridge
         }
 
         Graphics.Clear(Hud);
+        if (showColliders)
+        {
+            CollisionDebug.Draw(Hud, walls, 15);
+            CollisionDebug.Draw(Hud, shipCollider, touching ? 7 : 17);
+        }
+
         Text.Draw(Hud, "HELLO " + TextStyle.Color(11) + "ZTX16", 8, 242, 5, "");
         Text.Draw(Hud, "T+" + (Machine.TickCount / 60).ToString(), 200, 242, 4, "");
-        Text.Draw(Hud, "P palette  SPACE bg", 32, 6, 4, "");
+        Text.Draw(Hud, "P palette  C colliders", 32, 6, 4, "");
     }
 
     private static int Horizontal()

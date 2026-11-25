@@ -357,3 +357,36 @@ structs, which the VM does not support; C# 12 uses arrays.
   `string.Concat` over spans becomes string concatenation.
 - Syscalls can read `int[]` arguments (`ISyscallContext.ReadInt32Array`); arrays are part of the ABI as
   references.
+
+## Animation and collision
+
+### Animation
+
+- Animation resource: `animations/<name>.anim` (JSON), e.g.
+  `{"frames":[{"duration":5,"tiles":[[0,0],[1,1]]},{"duration":5,"tiles":[[0,2],[1,3]]}]}`. Each frame has a
+  duration in ticks (≥ 1) and a list of `[spriteTileIndex, tileId]` swaps; the index addresses the sprite's
+  tiles row-major, **bottom row first** (as in `.sprite`), up to 1023; tile IDs are 0..1023. A frame changes
+  only the tiles it lists. Animations name no tilemap or sprite: the sprite they are played on decides.
+- Syscalls `animation.frame_count/duration/swap_count/swap_index/swap_tile` read the resource; the Core
+  library builds on them: `Animation.Load(name)` copies the frames into the cartridge heap.
+- `AnimationPlayback(animation, sprite, mode)` is the runtime state: `Frame`, `FrameTime`, `PlaySpeed`
+  (≥ 0, fractional allowed), `Mode` (`Loop` / `OneShot`), `Play`/`Pause`/`Resume`. It only changes the
+  sprite's tiles (`Sprite.SetTileAt`); it never draws. `Update()` once per tick adds `PlaySpeed` to
+  `FrameTime` and advances as many frames as needed; `OneShot` stops on the last frame, keeping its tiles.
+- No callbacks: `Started`, `Looped` and `Finished` are true during the one `Update` in which that happened.
+- A frame that sets a tile index the sprite does not have fails the cartridge.
+
+### Collision
+
+- `Collider(x, y, width, height)` with `Enabled`; area is half-open `[X, X+W) × [Y, Y+H)`, so rectangles that
+  only touch do not overlap. `ColliderSet` is a game-defined group (a collider may be in several sets).
+- `Collision.Overlaps`, `Contains`, `Overlapping(rect|collider, set, results?)`: disabled colliders never
+  match; a collider never matches itself.
+- `Collision.Move(moving, targetX, targetY, set)` is a swept AABB test that does not move anything. It returns
+  a `CollisionHit` with the earliest collider, the contact point, the face normal (−1/0/1) and the safe
+  position (touching, not overlapping; the target if nothing was hit). Ending exactly in contact is not a hit.
+  Starting inside a collider reports it at once with a zero normal and the start as safe position.
+- No physics, sliding or response: the game decides. HelloSquare slides along walls by moving one axis at a
+  time.
+- `CollisionDebug.Draw(layer, collider|set, color)` draws 1-pixel outlines.
+- The Core project disables implicit usings (they made `List<T>` ambiguous with `ZTX16.Collections.List<T>`).

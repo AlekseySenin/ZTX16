@@ -108,6 +108,7 @@ public static class ProjectBuilder
         ResourceType.Tilemap => TilemapFormat.FromPng(File.ReadAllBytes(resource.FullPath), resource.RelativePath),
         ResourceType.Sprite => SpriteFormat.Encode(SpriteFormat.ParseJson(File.ReadAllText(resource.FullPath), resource.RelativePath)),
         ResourceType.Font => FontFormat.Encode(FontFormat.ParseJson(File.ReadAllText(resource.FullPath), resource.RelativePath)),
+        ResourceType.Animation => AnimationFormat.Encode(AnimationFormat.ParseJson(File.ReadAllText(resource.FullPath), resource.RelativePath)),
         _ => throw new ProjectException($"{resource.RelativePath}: {resource.Type} resources are not supported yet."),
     };
 

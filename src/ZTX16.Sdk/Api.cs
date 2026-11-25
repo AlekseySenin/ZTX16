@@ -277,3 +277,27 @@ public static class Text
     [Syscall("text.line_height")]
     public static int LineHeight(string font) => throw new NotInVmException();
 }
+
+/// <summary>Animation resources: frames of sprite tile swaps. Use <c>Animation</c> and <c>AnimationPlayback</c> to play them.</summary>
+public static class Animations
+{
+    /// <summary>Number of frames.</summary>
+    [Syscall("animation.frame_count")]
+    public static int FrameCount(string animation) => throw new NotInVmException();
+
+    /// <summary>Duration of a frame in ticks.</summary>
+    [Syscall("animation.duration")]
+    public static int Duration(string animation, int frame) => throw new NotInVmException();
+
+    /// <summary>Number of tile swaps in a frame.</summary>
+    [Syscall("animation.swap_count")]
+    public static int SwapCount(string animation, int frame) => throw new NotInVmException();
+
+    /// <summary>Sprite tile index set by a swap (row-major, bottom row first).</summary>
+    [Syscall("animation.swap_index")]
+    public static int SwapIndex(string animation, int frame, int swap) => throw new NotInVmException();
+
+    /// <summary>Tile ID set by a swap.</summary>
+    [Syscall("animation.swap_tile")]
+    public static int SwapTile(string animation, int frame, int swap) => throw new NotInVmException();
+}

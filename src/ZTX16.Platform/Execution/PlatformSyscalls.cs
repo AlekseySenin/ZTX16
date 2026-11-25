@@ -1,4 +1,5 @@
 using ZTX16.Abi;
+using ZTX16.Cartridge;
 using ZTX16.Platform.Runtime;
 using ZTX16.Platform.Graphics;
 using ZTX16.Platform.Input;
@@ -146,6 +147,13 @@ internal static class PlatformSyscalls
             return (uint)index < (uint)tiles.Length ? tiles[index] : throw new ArgumentOutOfRangeException(nameof(index), index, $"The sprite has {tiles.Length} tiles.");
         });
 
+        // Animations
+        BindWithContext("animation.frame_count", (c, a) => resources.Animation(Name(c, a[0])).Frames.Length);
+        BindWithContext("animation.duration", (c, a) => Frame(c, a).Duration);
+        BindWithContext("animation.swap_count", (c, a) => Frame(c, a).SpriteTiles.Length);
+        BindWithContext("animation.swap_index", (c, a) => Frame(c, a).SpriteTiles[Swap(c, a)]);
+        BindWithContext("animation.swap_tile", (c, a) => Frame(c, a).TileIds[Swap(c, a)]);
+
         // Text
         BindWithContext("text.draw", (c, a) =>
         {
@@ -218,6 +226,23 @@ internal static class PlatformSyscalls
             int flags = ToI32(a[first]);
             return new DrawTransform((flags & 1) != 0, (flags & 2) != 0, ToF32(a[first + 1]), ToF32(a[first + 2]), ToF32(a[first + 3]),
                 ToF32(a[first + 4]), ToF32(a[first + 5]));
+        }
+
+        // (name, frame, …) arguments of the animation syscalls
+        AnimationFrame Frame(ISyscallContext c, ReadOnlySpan<long> a)
+        {
+            AnimationFrame[] frames = resources.Animation(Name(c, a[0])).Frames;
+            int index = ToI32(a[1]);
+            return (uint)index < (uint)frames.Length
+                ? frames[index]
+                : throw new ArgumentOutOfRangeException(nameof(a), index, $"The animation has {frames.Length} frames.");
+        }
+
+        // (name, frame, swap) arguments
+        int Swap(ISyscallContext c, ReadOnlySpan<long> a)
+        {
+            int count = Frame(c, a).SpriteTiles.Length, index = ToI32(a[2]);
+            return (uint)index < (uint)count ? index : throw new ArgumentOutOfRangeException(nameof(a), index, $"The frame has {count} tile swaps.");
         }
 
         RuntimeFont Font(ISyscallContext context, long slot) => resources.Font(context.ReadString(slot) ?? string.Empty);
