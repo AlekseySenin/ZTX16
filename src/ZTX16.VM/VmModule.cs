@@ -39,6 +39,15 @@ public sealed record VmClass(
 {
     /// <summary>Marker for a class without a base class.</summary>
     public const int NoBase = ushort.MaxValue;
+
+    /// <summary>
+    /// A value type (struct): instances have copy semantics and a null reference stands for the
+    /// default value (all fields zero).
+    /// </summary>
+    public bool IsValueType { get; init; }
+
+    /// <summary>Field slots that hold nested value-type instances, mapped to their class.</summary>
+    public IReadOnlyDictionary<int, int> ValueFields { get; init; } = new Dictionary<int, int>();
 }
 
 /// <summary>An instance field: a slot of a class's instances.</summary>

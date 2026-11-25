@@ -135,7 +135,17 @@ public sealed class ClassBuilder
     /// <summary>Dispatch table: selector → function.</summary>
     public Dictionary<int, int> Methods { get; } = [];
 
-    internal VmClass Build() => new(Name, BaseClass, IsInterface, _fields, Interfaces.Order().ToArray(), new Dictionary<int, int>(Methods));
+    /// <summary>Whether this class is a value type (struct).</summary>
+    public bool IsValueType { get; set; }
+
+    /// <summary>Slots holding nested value-type instances: slot → class.</summary>
+    public Dictionary<int, int> ValueFields { get; } = [];
+
+    internal VmClass Build() => new(Name, BaseClass, IsInterface, _fields, Interfaces.Order().ToArray(), new Dictionary<int, int>(Methods))
+    {
+        IsValueType = IsValueType,
+        ValueFields = new Dictionary<int, int>(ValueFields),
+    };
 }
 
 /// <summary>Emits the code of one function.</summary>
@@ -238,6 +248,20 @@ public sealed class FunctionBuilder
         _code.Add((byte)(classIndex >> 8));
         _code.Add((byte)constructor);
         _code.Add((byte)(constructor >> 8));
+        return this;
+    }
+
+    /// <summary>Emits an opcode with two u16 operands (<see cref="OpCode.MaterializeLocal"/>, pointers, …).</summary>
+    public FunctionBuilder Emit(OpCode op, int first, int second)
+    {
+        RequireOperand(op, OperandKind.U16Pair);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan((uint)first, ushort.MaxValue, nameof(first));
+        ArgumentOutOfRangeException.ThrowIfGreaterThan((uint)second, ushort.MaxValue, nameof(second));
+        _code.Add((byte)op);
+        _code.Add((byte)first);
+        _code.Add((byte)(first >> 8));
+        _code.Add((byte)second);
+        _code.Add((byte)(second >> 8));
         return this;
     }
 

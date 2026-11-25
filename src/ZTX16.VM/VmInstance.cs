@@ -56,6 +56,7 @@ public sealed class VmInstance
     private readonly int[] _framePc = new int[MaxCallDepth + 2];
     private readonly int[] _frameResumePc = new int[MaxCallDepth + 2];
     private readonly long[] _frameConstructed = new long[MaxCallDepth + 2];
+    private readonly List<long> _temporaryRoots = [];
     private long _budget = long.MaxValue;
     private int _depth;
 
@@ -491,7 +492,147 @@ public sealed class VmInstance
                 case OpCode.LoadField:
                     {
                         int field = ReadU16(code, ref pc);
-                        s[sp - 1] = FieldOwner(s[sp - 1], field, function, start).Fields[Module.Fields[field].Slot];
+                        VmField f = Module.Fields[field];
+
+                        // A null value-type instance is the default value: every field reads as zero.
+                        s[sp - 1] = s[sp - 1] == 0 && Module.Classes[f.Class].IsValueType
+                            ? 0
+                            : FieldOwner(s[sp - 1], field, function, start).Fields[f.Slot];
+                        break;
+                    }
+
+                case OpCode.Swap:
+                    (s[sp - 1], s[sp - 2]) = (s[sp - 2], s[sp - 1]);
+                    break;
+
+                case OpCode.Clone:
+                    _framePc[frame] = start;
+                    s[sp - 1] = CloneValue(s[sp - 1], function, start);
+                    break;
+
+                case OpCode.CopyInto:
+                    _framePc[frame] = start;
+                    sp -= 2;
+                    CopyValue(Instance(s[sp], function, start), s[sp + 1], function, start);
+                    break;
+
+                case OpCode.MaterializeLocal:
+                    {
+                        _framePc[frame] = start;
+                        int local = ReadU16(code, ref pc);
+                        int valueClass = ReadU16(code, ref pc);
+                        if (s[frameBase + local] == 0)
+                        {
+                            s[frameBase + local] = NewDefault(valueClass, function, start);
+                        }
+
+                        s[sp++] = s[frameBase + local];
+                        break;
+                    }
+
+                case OpCode.MaterializeField:
+                    {
+                        _framePc[frame] = start;
+                        int field = ReadU16(code, ref pc);
+                        int valueClass = ReadU16(code, ref pc);
+                        InstanceObject owner = FieldOwner(s[sp - 1], field, function, start);
+                        int slot = Module.Fields[field].Slot;
+                        if (owner.Fields[slot] == 0)
+                        {
+                            long created = NewDefault(valueClass, function, start);
+                            owner.Fields[slot] = created;
+                        }
+
+                        s[sp - 1] = owner.Fields[slot];
+                        break;
+                    }
+
+                case OpCode.MaterializeGlobal:
+                    {
+                        _framePc[frame] = start;
+                        int global = ReadU16(code, ref pc);
+                        int valueClass = ReadU16(code, ref pc);
+                        if (_globals[global] == 0)
+                        {
+                            _globals[global] = NewDefault(valueClass, function, start);
+                        }
+
+                        s[sp++] = _globals[global];
+                        break;
+                    }
+
+                case OpCode.MaterializeElement:
+                    {
+                        _framePc[frame] = start;
+                        int valueClass = ReadU16(code, ref pc);
+                        sp--;
+                        ArrayObject structArray = ArrayOf(s[sp - 1], VmElementAccess.Ref, function, start);
+                        int index = I32(s[sp]);
+                        CheckIndex(structArray, index, function, start);
+                        long[] elements = (long[])structArray.Data;
+                        if (elements[index] == 0)
+                        {
+                            long created = NewDefault(valueClass, function, start);
+                            elements[index] = created;
+                        }
+
+                        s[sp - 1] = elements[index];
+                        break;
+                    }
+
+                case OpCode.NewCell:
+                    {
+                        _framePc[frame] = start;
+                        var access = (VmElementAccess)ReadU16(code, ref pc);
+                        s[sp++] = Allocate(new PointerObject { Kind = PointerKind.Cell, Access = access }, function, start);
+                        break;
+                    }
+
+                case OpCode.FieldPointer:
+                    {
+                        _framePc[frame] = start;
+                        int field = ReadU16(code, ref pc);
+                        var access = (VmElementAccess)ReadU16(code, ref pc);
+                        long target = s[sp - 1];
+                        FieldOwner(target, field, function, start);
+                        s[sp - 1] = Allocate(new PointerObject { Kind = PointerKind.Field, Target = target, Index = Module.Fields[field].Slot, Access = access }, function, start);
+                        break;
+                    }
+
+                case OpCode.ElementPointer:
+                    {
+                        _framePc[frame] = start;
+                        var access = (VmElementAccess)ReadU16(code, ref pc);
+                        sp--;
+                        long target = s[sp - 1];
+                        int index = I32(s[sp]);
+                        CheckIndex(ArrayOf(target, access, function, start), index, function, start);
+                        s[sp - 1] = Allocate(new PointerObject { Kind = PointerKind.Element, Target = target, Index = index }, function, start);
+                        break;
+                    }
+
+                case OpCode.GlobalPointer:
+                    {
+                        _framePc[frame] = start;
+                        int global = ReadU16(code, ref pc);
+                        var access = (VmElementAccess)ReadU16(code, ref pc);
+                        s[sp] = Allocate(new PointerObject { Kind = PointerKind.Global, Index = global, Access = access }, function, start);
+                        sp++;
+                        break;
+                    }
+
+                case OpCode.LoadIndirect:
+                    {
+                        var access = (VmElementAccess)ReadU16(code, ref pc);
+                        s[sp - 1] = LoadIndirect(Pointer(s[sp - 1], function, start), access, function, start);
+                        break;
+                    }
+
+                case OpCode.StoreIndirect:
+                    {
+                        var access = (VmElementAccess)ReadU16(code, ref pc);
+                        sp -= 2;
+                        StoreIndirect(Pointer(s[sp], function, start), s[sp + 1], access, function, start);
                         break;
                     }
 
@@ -602,7 +743,7 @@ public sealed class VmInstance
                         {
                             VmType.I32 or VmType.F32 => I32(v),
                             VmType.I64 or VmType.F64 => unchecked((int)v ^ (int)(v >> 32)),
-                            _ => v == 0 ? 0 : _heap.Get(v) is StringObject str ? StableStringHash(str.Value) : unchecked((int)v * -1640531535),
+                            _ => ReferenceHash(v),
                         };
                         break;
                     }
@@ -611,8 +752,7 @@ public sealed class VmInstance
                     {
                         sp--;
                         long a = s[sp - 1], b = s[sp];
-                        s[sp - 1] = B(a == b
-                            || (a != 0 && b != 0 && _heap.Get(a) is StringObject sa && _heap.Get(b) is StringObject sb && sa.Value == sb.Value));
+                        s[sp - 1] = B(ReferenceValueEquals(a, b));
                         break;
                     }
 
@@ -743,6 +883,168 @@ public sealed class VmInstance
 
     // ---- heap ---------------------------------------------------------------------------
 
+    // ---- value types and pointers ---------------------------------------------------------
+
+    private long NewDefault(int valueClass, VmFunction function, int offset) =>
+        Allocate(new InstanceObject(valueClass, Module.Classes[valueClass].Fields.Count), function, offset);
+
+    /// <summary>Deep copy of a value-type instance: nested value-type fields are copied too. Null stays null (default).</summary>
+    private long CloneValue(long handle, VmFunction function, int offset)
+    {
+        if (handle == 0)
+        {
+            return 0;
+        }
+
+        InstanceObject source = Instance(handle, function, offset);
+        long copyHandle = NewDefault(source.Class, function, offset);
+
+        // The copy is reachable only from here while nested values are cloned (which may collect).
+        _temporaryRoots.Add(copyHandle);
+        try
+        {
+            CopyValue((InstanceObject)_heap.Get(copyHandle), handle, function, offset);
+        }
+        finally
+        {
+            _temporaryRoots.RemoveAt(_temporaryRoots.Count - 1);
+        }
+
+        return copyHandle;
+    }
+
+    /// <summary>Copies the fields of value <paramref name="sourceHandle"/> (null = default) into <paramref name="destination"/>.</summary>
+    private void CopyValue(InstanceObject destination, long sourceHandle, VmFunction function, int offset)
+    {
+        if (sourceHandle != 0 && ReferenceEquals(_heap.Get(sourceHandle), destination))
+        {
+            return;
+        }
+
+        VmClass cls = Module.Classes[destination.Class];
+        InstanceObject? source = sourceHandle == 0 ? null : Instance(sourceHandle, function, offset);
+        if (source is not null && source.Class != destination.Class)
+        {
+            throw new VmTrapException($"Cannot copy '{Module.Classes[source.Class].Name}' into '{cls.Name}'", function.Name, offset);
+        }
+
+        for (int i = 0; i < destination.Fields.Length; i++)
+        {
+            long value = source?.Fields[i] ?? 0;
+            if (cls.ValueFields.ContainsKey(i))
+            {
+                long nested = destination.Fields[i];
+                if (nested != 0)
+                {
+                    CopyValue((InstanceObject)_heap.Get(nested), value, function, offset);
+                    continue;
+                }
+
+                value = CloneValue(value, function, offset);
+            }
+
+            destination.Fields[i] = value;
+        }
+    }
+
+    private int ReferenceHash(long handle)
+    {
+        if (handle == 0)
+        {
+            return 0;
+        }
+
+        switch (_heap.Get(handle))
+        {
+            case StringObject str:
+                return StableStringHash(str.Value);
+            case InstanceObject obj when Module.Classes[obj.Class].IsValueType:
+                {
+                    VmClass cls = Module.Classes[obj.Class];
+                    int hash = obj.Class;
+                    for (int i = 0; i < obj.Fields.Length; i++)
+                    {
+                        int part = cls.Fields[i] == VmType.Ref ? ReferenceHash(obj.Fields[i]) : unchecked((int)obj.Fields[i] ^ (int)(obj.Fields[i] >> 32));
+                        hash = unchecked((hash * 31) + part);
+                    }
+
+                    return hash;
+                }
+
+            default:
+                return unchecked((int)handle * -1640531535);
+        }
+    }
+
+    /// <summary>Identity, except strings compare by content and value types field by field (null = default).</summary>
+    private bool ReferenceValueEquals(long a, long b)
+    {
+        if (a == b)
+        {
+            return true;
+        }
+
+        HeapObject? x = a == 0 ? null : _heap.Get(a);
+        HeapObject? y = b == 0 ? null : _heap.Get(b);
+        if (x is StringObject sx && y is StringObject sy)
+        {
+            return sx.Value == sy.Value;
+        }
+
+        InstanceObject? ix = x as InstanceObject, iy = y as InstanceObject;
+        if ((ix is null && iy is null) || (ix is not null && !Module.Classes[ix.Class].IsValueType)
+            || (iy is not null && !Module.Classes[iy.Class].IsValueType) || (ix is not null && iy is not null && ix.Class != iy.Class))
+        {
+            return false;
+        }
+
+        VmClass cls = Module.Classes[(ix ?? iy)!.Class];
+        for (int i = 0; i < cls.Fields.Count; i++)
+        {
+            long fx = ix?.Fields[i] ?? 0, fy = iy?.Fields[i] ?? 0;
+            bool equal = cls.Fields[i] == VmType.Ref ? ReferenceValueEquals(fx, fy) : fx == fy;
+            if (!equal)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private PointerObject Pointer(long handle, VmFunction function, int offset) =>
+        Deref(handle, function, offset) as PointerObject ?? throw new VmTrapException("Not a pointer", function.Name, offset);
+
+    private long LoadIndirect(PointerObject pointer, VmElementAccess access, VmFunction function, int offset) => pointer.Kind switch
+    {
+        PointerKind.Cell => pointer.Value,
+        PointerKind.Field => ((InstanceObject)_heap.Get(pointer.Target)).Fields[pointer.Index],
+        PointerKind.Global => _globals[pointer.Index],
+        _ => LoadElement(ArrayOf(pointer.Target, access, function, offset), pointer.Index, access, function, offset),
+    };
+
+    private void StoreIndirect(PointerObject pointer, long value, VmElementAccess access, VmFunction function, int offset)
+    {
+        // Slots hold sub-32-bit integers already narrowed, as direct stores do; the narrowing follows the
+        // location's declared type (stind.i1 is used for both byte and sbyte).
+        long narrowed = pointer.Access switch
+        {
+            VmElementAccess.I8 => unchecked((sbyte)value),
+            VmElementAccess.U8 => unchecked((byte)value),
+            VmElementAccess.I16 => unchecked((short)value),
+            VmElementAccess.U16 => unchecked((ushort)value),
+            _ => value,
+        };
+
+        switch (pointer.Kind)
+        {
+            case PointerKind.Cell: pointer.Value = narrowed; break;
+            case PointerKind.Field: ((InstanceObject)_heap.Get(pointer.Target)).Fields[pointer.Index] = narrowed; break;
+            case PointerKind.Global: _globals[pointer.Index] = narrowed; break;
+            default: StoreElement(ArrayOf(pointer.Target, access, function, offset), pointer.Index, value, access, function, offset); break;
+        }
+    }
+
     // FNV-1a over UTF-16 code units: deterministic across runs and hosts, unlike string.GetHashCode.
     private static int StableStringHash(string value)
     {
@@ -776,6 +1078,11 @@ public sealed class VmInstance
     private void Collect()
     {
         foreach (long handle in _stringHandles)
+        {
+            _heap.MarkRoot(handle);
+        }
+
+        foreach (long handle in _temporaryRoots)
         {
             _heap.MarkRoot(handle);
         }

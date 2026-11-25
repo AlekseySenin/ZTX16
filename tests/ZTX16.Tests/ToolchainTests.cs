@@ -366,11 +366,11 @@ public class ToolchainRejectionTests
     [InlineData("public void Tick() { Graphics.Clear(System.Math.Abs(-1)); }", "", "System.Math.Abs")]
     [InlineData("public void Tick() { try { Graphics.Clear(0); } finally { Graphics.Clear(1); } }", "", "try/catch/finally")]
     [InlineData("public void Tick() { checked { int x = int.MaxValue; x++; Graphics.Clear(x); } }", "", "checked")]
-    [InlineData("public void Tick() { var p = new P(); Graphics.Clear(p.X); }", "struct P { public int X; }", "struct")]
+    [InlineData("public void Tick() { int? n = 5; Graphics.Clear(n.Value); }", "", "System.Nullable")]
     [InlineData("public void Tick() { var l = new System.Collections.Generic.List<int>(); }", "", "List")]
     [InlineData("public void Tick() { System.Action a = () => Graphics.Clear(0); }", "", "delegates")]
     [InlineData("public void Tick() { object o = 5; Graphics.Clear(o == null ? 0 : 1); }", "", "boxing")]
-    [InlineData("public void Tick() { int v = 0; Inc(ref v); } static void Inc(ref int x) => x++;", "", "ref")]
+    [InlineData("public void Tick() { var t = (1, 2); Graphics.Clear(t.Item1); }", "", "ValueTuple")]
     [InlineData("public void Tick() { var e = new E(); }", "class E : System.Exception { }", "System.Exception")]
     public void UnsupportedFeaturesAreReportedClearly(string tick, string extraTypes, string expectedFragment)
     {

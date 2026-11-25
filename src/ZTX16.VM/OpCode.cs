@@ -39,6 +39,8 @@ public enum OpCode : byte
     Dup = 0x18,
     /// <summary>Discard the top value.</summary>
     Pop = 0x19,
+    /// <summary>Swap the two top values.</summary>
+    Swap = 0x1A,
 
     // i32 arithmetic and bitwise
     /// <summary>i32 add (wrapping).</summary>
@@ -294,6 +296,34 @@ public enum OpCode : byte
     /// Operand: u16 <see cref="VmFormatKind"/>.
     /// </summary>
     ToText = 0xBB,
+
+    // Value types (structs): heap objects with copy semantics; null is the default value.
+    /// <summary>Pop a reference; push a deep copy of the value-type instance (null stays null).</summary>
+    Clone = 0xC0,
+    /// <summary>Pop a source value and a destination instance; copy the source fields into the destination (null source = zero).</summary>
+    CopyInto = 0xC1,
+    /// <summary>Push the value-type instance stored in a local, creating a default one first if the local is null. Operands: u16 local, u16 class.</summary>
+    MaterializeLocal = 0xC2,
+    /// <summary>Pop an object; push the value-type instance stored in its field, creating it if null. Operands: u16 field, u16 class.</summary>
+    MaterializeField = 0xC3,
+    /// <summary>Push the value-type instance stored in a global, creating it if null. Operands: u16 global, u16 class.</summary>
+    MaterializeGlobal = 0xC4,
+    /// <summary>Pop an i32 index and an array; push the value-type element, creating it if null. Operand: u16 class.</summary>
+    MaterializeElement = 0xC5,
+
+    // Managed pointers to non-struct locations (ref/out parameters, ref locals)
+    /// <summary>Push a new cell (a heap-allocated variable) holding zero. Operand: u16 element access describing its type.</summary>
+    NewCell = 0xC8,
+    /// <summary>Pop an object; push a pointer to one of its fields. Operands: u16 field, u16 element access of the field type.</summary>
+    FieldPointer = 0xC9,
+    /// <summary>Pop an i32 index and an array; push a pointer to the element. Operand: u16 element access.</summary>
+    ElementPointer = 0xCA,
+    /// <summary>Push a pointer to a global. Operands: u16 global, u16 element access of the global type.</summary>
+    GlobalPointer = 0xCB,
+    /// <summary>Pop a pointer; push the value it points to. Operand: u16 element access.</summary>
+    LoadIndirect = 0xCC,
+    /// <summary>Pop a value and a pointer; store the value through the pointer. Operand: u16 element access.</summary>
+    StoreIndirect = 0xCD,
 }
 
 /// <summary>How <see cref="OpCode.ToText"/> interprets its operand.</summary>
@@ -375,7 +405,10 @@ internal static class OpCodeInfo
                     or OpCode.IsInstance or OpCode.CastClass
                     or OpCode.NewArray or OpCode.LoadElement or OpCode.StoreElement
                     or OpCode.LoadString or OpCode.Hash or OpCode.ToText => OperandKind.U16,
-                OpCode.New => OperandKind.U16Pair,
+                OpCode.New or OpCode.MaterializeLocal or OpCode.MaterializeField or OpCode.MaterializeGlobal
+                    or OpCode.FieldPointer or OpCode.GlobalPointer => OperandKind.U16Pair,
+                OpCode.MaterializeElement or OpCode.NewCell or OpCode.ElementPointer
+                    or OpCode.LoadIndirect or OpCode.StoreIndirect => OperandKind.U16,
                 OpCode.Branch or OpCode.BranchIfTrue or OpCode.BranchIfFalse => OperandKind.BranchTarget,
                 _ => OperandKind.None,
             };

@@ -52,6 +52,42 @@ internal sealed class ArrayObject : HeapObject
     });
 }
 
+/// <summary>What a <see cref="PointerObject"/> points at.</summary>
+internal enum PointerKind : byte
+{
+    /// <summary>Its own value slot: a heap-allocated variable.</summary>
+    Cell,
+
+    /// <summary>A field slot of an instance.</summary>
+    Field,
+
+    /// <summary>An array element.</summary>
+    Element,
+
+    /// <summary>A module global.</summary>
+    Global,
+}
+
+/// <summary>A managed pointer to a non-struct location (ref/out parameters, ref locals).</summary>
+internal sealed class PointerObject : HeapObject
+{
+    public PointerKind Kind { get; init; }
+
+    /// <summary>Handle of the instance or array pointed into (Field, Element).</summary>
+    public long Target { get; init; }
+
+    /// <summary>Field slot, element index or global index.</summary>
+    public int Index { get; init; }
+
+    /// <summary>Contents of a cell.</summary>
+    public long Value { get; set; }
+
+    /// <summary>Element access describing the pointed-to location: its type and how stores narrow.</summary>
+    public VmElementAccess Access { get; init; }
+
+    public override long Size => 48;
+}
+
 /// <summary>An immutable string of UTF-16 code units.</summary>
 internal sealed class StringObject(string value) : HeapObject
 {
@@ -146,6 +182,18 @@ internal sealed class VmHeap
                         {
                             Push(Get(instance.Fields[i]));
                         }
+                    }
+
+                    break;
+
+                case PointerObject pointer:
+                    if (pointer.Kind is PointerKind.Field or PointerKind.Element)
+                    {
+                        Push(Get(pointer.Target));
+                    }
+                    else if (pointer.Kind == PointerKind.Cell && pointer.Access == VmElementAccess.Ref && pointer.Value != 0)
+                    {
+                        Push(Get(pointer.Value));
                     }
 
                     break;

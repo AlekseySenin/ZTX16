@@ -23,7 +23,8 @@ public sealed class ExecutableFormatException : Exception
 /// u16 importCount   { str name, sig }
 /// u16 functionCount { str name, sig, u16 localCount { u8 type }, u32 codeLength, code }
 /// u16 exportCount   { str name, u16 functionIndex }
-/// u16 classCount    { str name, u16 base, u8 isInterface, u16 n { u8 fieldType }, u16 n { u16 interface }, u16 n { u16 selector, u16 function } }
+/// u16 classCount    { str name, u16 base, u8 flags (1 = interface, 2 = value type), u16 n { u8 fieldType },
+///                     u16 n { u16 interface }, u16 n { u16 selector, u16 function }, u16 n { u16 slot, u16 valueClass } }
 /// u16 fieldCount    { u16 class, u16 slot }
 /// u16 selectorCount { str name, sig }
 /// u16 stringCount   { u16 charCount, UTF-16 code units }
@@ -35,7 +36,7 @@ public sealed class ExecutableFormatException : Exception
 public static class ExecutableFormat
 {
     /// <summary>Current executable format version.</summary>
-    public const ushort FormatVersion = 2;
+    public const ushort FormatVersion = 3;
 
     /// <summary>Upper bound on a single function's code size.</summary>
     public const int MaxCodeLength = 1 << 24;
@@ -92,7 +93,7 @@ public static class ExecutableFormat
             {
                 WriteString(writer, c.Name);
                 WriteCount(writer, c.BaseClass);
-                writer.Write(c.IsInterface ? (byte)1 : (byte)0);
+                writer.Write((byte)((c.IsInterface ? 1 : 0) | (c.IsValueType ? 2 : 0)));
                 WriteCount(writer, c.Fields.Count);
                 foreach (VmType type in c.Fields)
                 {
@@ -110,6 +111,13 @@ public static class ExecutableFormat
                 {
                     WriteCount(writer, selector);
                     WriteCount(writer, function);
+                }
+
+                WriteCount(writer, c.ValueFields.Count);
+                foreach ((int slot, int valueClass) in c.ValueFields.OrderBy(v => v.Key))
+                {
+                    WriteCount(writer, slot);
+                    WriteCount(writer, valueClass);
                 }
             }
 
@@ -214,7 +222,8 @@ public static class ExecutableFormat
             {
                 string name = ReadString(reader);
                 int baseClass = reader.ReadUInt16();
-                bool isInterface = reader.ReadByte() != 0;
+                byte flags = reader.ReadByte();
+                bool isInterface = (flags & 1) != 0;
                 var fieldTypes = new VmType[reader.ReadUInt16()];
                 for (int f = 0; f < fieldTypes.Length; f++)
                 {
@@ -238,7 +247,22 @@ public static class ExecutableFormat
                     }
                 }
 
-                classes[i] = new VmClass(name, baseClass, isInterface, fieldTypes, interfaces, methods);
+                int valueFieldCount = reader.ReadUInt16();
+                var valueFields = new Dictionary<int, int>(valueFieldCount);
+                for (int v = 0; v < valueFieldCount; v++)
+                {
+                    int slot = reader.ReadUInt16();
+                    if (!valueFields.TryAdd(slot, reader.ReadUInt16()))
+                    {
+                        throw new ExecutableFormatException($"Class '{name}' lists value field {slot} twice.");
+                    }
+                }
+
+                classes[i] = new VmClass(name, baseClass, isInterface, fieldTypes, interfaces, methods)
+                {
+                    IsValueType = (flags & 2) != 0,
+                    ValueFields = valueFields,
+                };
             }
 
             var fields = new VmField[reader.ReadUInt16()];

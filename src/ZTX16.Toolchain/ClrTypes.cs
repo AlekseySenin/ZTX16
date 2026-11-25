@@ -22,7 +22,7 @@ internal sealed record EnumClrType(string FullName, PrimitiveTypeCode Underlying
 /// A class or interface defined in the cartridge, possibly a generic instantiation. Generic
 /// definitions without arguments are "open"; the translator only instantiates closed ones.
 /// </summary>
-internal sealed record ClassClrType(TypeDefinitionHandle Handle, string FullName, bool IsInterface, ImmutableArray<ClrType> TypeArgs)
+internal sealed record ClassClrType(TypeDefinitionHandle Handle, string FullName, bool IsInterface, ImmutableArray<ClrType> TypeArgs, bool IsValueType = false)
     : ClrType(TypeArgs.IsDefaultOrEmpty ? FullName : $"{FullName}<{string.Join(",", TypeArgs)}>")
 {
     /// <summary>Generic context for members of this type.</summary>
@@ -32,7 +32,7 @@ internal sealed record ClassClrType(TypeDefinitionHandle Handle, string FullName
     /// The same definition with <paramref name="typeArgs"/>. Always use this instead of a
     /// <c>with</c> expression: <see cref="ClrType.Display"/> is computed at construction.
     /// </summary>
-    public ClassClrType Instantiate(ImmutableArray<ClrType> typeArgs) => new(Handle, FullName, IsInterface, typeArgs);
+    public ClassClrType Instantiate(ImmutableArray<ClrType> typeArgs) => new(Handle, FullName, IsInterface, typeArgs, IsValueType);
 }
 
 /// <summary>An unresolved generic parameter (only seen when decoding without a context).</summary>
@@ -56,6 +56,12 @@ internal sealed record SdkInterfaceClrType(string FullName) : ClrType(FullName);
 
 /// <summary><c>System.String</c>.</summary>
 internal sealed record StringClrType() : ClrType("string");
+
+/// <summary>
+/// A managed pointer (<c>ref</c>/<c>out</c>/<c>in</c> parameters, ref locals). In the VM it is a reference:
+/// the struct instance itself for struct targets, a pointer object otherwise.
+/// </summary>
+internal sealed record ByRefClrType(ClrType Element) : ClrType($"ref {Element}");
 
 /// <summary><c>System.Object</c>.</summary>
 internal sealed record ObjectClrType() : ClrType("object");
@@ -86,7 +92,7 @@ internal static class ClrTypeMapping
             case EnumClrType e:
                 code = e.Underlying;
                 break;
-            case ClassClrType or SdkInterfaceClrType or StringClrType or ObjectClrType:
+            case ClassClrType or SdkInterfaceClrType or StringClrType or ObjectClrType or ByRefClrType:
                 return new(VmType.Ref, null);
             case ArrayClrType array:
                 ElementAccess(array.Element, context); // validates the element type
@@ -157,6 +163,9 @@ internal static class ClrTypeMapping
         };
     }
 
+    /// <summary>True for value types defined in the cartridge (structs).</summary>
+    public static bool IsStruct(ClrType type) => type is ClassClrType { IsValueType: true };
+
     /// <summary>Converts a decoded method signature into a VM signature; instance methods get a leading receiver.</summary>
     public static VmSignature ToVmSignature(MethodSignature<ClrType> signature, string context, bool hasThis = false)
     {
@@ -222,7 +231,7 @@ internal sealed class ClrTypeProvider : ISignatureTypeProvider<ClrType, GenericC
         }
         else if (baseName == "System.ValueType")
         {
-            result = new UnsupportedClrType($"struct {fullName}", "structs are not supported yet; use a class");
+            result = new ClassClrType(handle, fullName, IsInterface: false, [], IsValueType: true);
         }
         else
         {
@@ -289,7 +298,7 @@ internal sealed class ClrTypeProvider : ISignatureTypeProvider<ClrType, GenericC
         new UnsupportedClrType($"{elementType}[,]", "multi-dimensional arrays are not supported; use jagged arrays");
 
     public ClrType GetByReferenceType(ClrType elementType) =>
-        new UnsupportedClrType($"ref {elementType}", "ref/out/in parameters are not supported yet");
+        elementType is UnsupportedClrType u ? u : new ByRefClrType(elementType);
 
     public ClrType GetPointerType(ClrType elementType) => new UnsupportedClrType($"{elementType}*", "pointers are not part of the ZTX16 model");
 

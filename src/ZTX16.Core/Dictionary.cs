@@ -51,6 +51,21 @@ public sealed class Dictionary<TKey, TValue> : System.Collections.IEnumerable
     /// <summary>True if the dictionary contains <paramref name="key"/>.</summary>
     public bool ContainsKey(TKey key) => Find(key) >= 0;
 
+    /// <summary>Gets the value for <paramref name="key"/>. Returns false (and the default value) if missing.</summary>
+    public bool TryGetValue(TKey key, out TValue value)
+    {
+        int index = Find(key);
+        if (index < 0)
+        {
+            TValue empty = default!;
+            value = empty;
+            return false;
+        }
+
+        value = _values[index];
+        return true;
+    }
+
     /// <summary>Returns the value for <paramref name="key"/>, or <paramref name="fallback"/> if missing.</summary>
     public TValue GetValueOrDefault(TKey key, TValue fallback)
     {

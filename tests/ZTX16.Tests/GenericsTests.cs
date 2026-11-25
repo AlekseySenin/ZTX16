@@ -133,7 +133,10 @@ public class GenericsSemanticsTests
                 foreach (int key in squares.Keys) total += squares[key];
                 int keyOrder = 0;
                 foreach (int key in squares.Keys) keyOrder = keyOrder * 31 + key;
-                return (int)(total % 100000) + ages["ann"] + ages.GetValueOrDefault("zed", -5) + squares.Count * 7
+                int found = ages.TryGetValue("bob", out int bobAge) ? bobAge : -1;
+                int missing = ages.TryGetValue("zed", out int zedAge) ? 1 : zedAge - 3;
+                squares.TryGetValue(1000, out long seven);
+                return (int)(total % 100000) + ages["ann"] + ages.GetValueOrDefault("zed", -5) + squares.Count * 7 + found * 3 + missing + (int)seven
                     + (ages.ContainsKey("bob") ? 1 : 0) + keyOrder % 1000;
             }
 

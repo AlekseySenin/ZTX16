@@ -152,6 +152,20 @@ public static class Verifier
                 throw new VerificationException($"Interface '{c.Name}' cannot have fields.");
             }
 
+            if (c.IsValueType && (c.IsInterface || c.BaseClass != VmClass.NoBase))
+            {
+                throw new VerificationException($"Value type '{c.Name}' cannot be an interface or have a base class.");
+            }
+
+            foreach ((int slot, int valueClass) in c.ValueFields)
+            {
+                if ((uint)slot >= (uint)c.Fields.Count || c.Fields[slot] != VmType.Ref
+                    || (uint)valueClass >= (uint)module.Classes.Count || !module.Classes[valueClass].IsValueType)
+                {
+                    throw new VerificationException($"Class '{c.Name}' has an invalid value field {slot}.");
+                }
+            }
+
             foreach (int iface in c.Interfaces)
             {
                 if ((uint)iface >= (uint)module.Classes.Count || !module.Classes[iface].IsInterface)
@@ -273,7 +287,10 @@ public static class Verifier
 
         /// <summary>Instructions at which the garbage collector may run or which leave this frame.</summary>
         public static bool IsSafepoint(OpCode op) => op is OpCode.Call or OpCode.CallVirtual or OpCode.Syscall
-            or OpCode.New or OpCode.NewArray or OpCode.StringConcat or OpCode.StringConcatArray or OpCode.ToText;
+            or OpCode.New or OpCode.NewArray or OpCode.StringConcat or OpCode.StringConcatArray or OpCode.ToText
+            or OpCode.Clone or OpCode.CopyInto or OpCode.MaterializeLocal or OpCode.MaterializeField
+            or OpCode.MaterializeGlobal or OpCode.MaterializeElement or OpCode.NewCell
+            or OpCode.FieldPointer or OpCode.ElementPointer or OpCode.GlobalPointer;
 
         public VerificationException Fail(int offset, string message) =>
             new($"Function '{_function.Name}' at offset {offset}: {message}.");
@@ -359,6 +376,104 @@ public static class Verifier
 
                 case OpCode.Pop:
                     s.PopAny();
+                    return true;
+
+                case OpCode.Swap:
+                    {
+                        VmType top = s.PopAny();
+                        VmType below = s.PopAny();
+                        s.Push(top);
+                        s.Push(below);
+                        return true;
+                    }
+
+                case OpCode.Clone:
+                    s.Pop(VmType.Ref);
+                    s.Push(VmType.Ref);
+                    return true;
+
+                case OpCode.CopyInto:
+                    s.Pop(VmType.Ref);
+                    s.Pop(VmType.Ref);
+                    return true;
+
+                case OpCode.MaterializeLocal:
+                    if (Local(operand & 0xFFFF, offset) != VmType.Ref)
+                    {
+                        throw Fail(offset, "struct local must be a reference slot");
+                    }
+
+                    ValueClass(operand >> 16, offset);
+                    s.Push(VmType.Ref);
+                    return true;
+
+                case OpCode.MaterializeField:
+                    if (Field(operand & 0xFFFF, offset) != VmType.Ref)
+                    {
+                        throw Fail(offset, "struct field must be a reference slot");
+                    }
+
+                    ValueClass(operand >> 16, offset);
+                    s.Pop(VmType.Ref);
+                    s.Push(VmType.Ref);
+                    return true;
+
+                case OpCode.MaterializeGlobal:
+                    if (Global(operand & 0xFFFF, offset) != VmType.Ref)
+                    {
+                        throw Fail(offset, "struct global must be a reference slot");
+                    }
+
+                    ValueClass(operand >> 16, offset);
+                    s.Push(VmType.Ref);
+                    return true;
+
+                case OpCode.MaterializeElement:
+                    ValueClass(operand, offset);
+                    s.Pop(VmType.I32);
+                    s.Pop(VmType.Ref);
+                    s.Push(VmType.Ref);
+                    return true;
+
+                case OpCode.NewCell:
+                    Access(operand, offset);
+                    s.Push(VmType.Ref);
+                    return true;
+
+                case OpCode.FieldPointer:
+                    if (Field(operand & 0xFFFF, offset) != VmTypes.OfAccess(Access(operand >> 16, offset)))
+                    {
+                        throw Fail(offset, "pointer access does not match the field type");
+                    }
+
+                    s.Pop(VmType.Ref);
+                    s.Push(VmType.Ref);
+                    return true;
+
+                case OpCode.ElementPointer:
+                    Access(operand, offset);
+                    s.Pop(VmType.I32);
+                    s.Pop(VmType.Ref);
+                    s.Push(VmType.Ref);
+                    return true;
+
+                case OpCode.GlobalPointer:
+                    if (Global(operand & 0xFFFF, offset) != VmTypes.OfAccess(Access(operand >> 16, offset)))
+                    {
+                        throw Fail(offset, "pointer access does not match the global type");
+                    }
+
+                    s.Push(VmType.Ref);
+                    return true;
+
+                case OpCode.LoadIndirect:
+                    s.Pop(VmType.Ref);
+                    s.Push(VmTypes.OfAccess(Access(operand, offset)));
+                    return true;
+
+                case OpCode.StoreIndirect:
+                    s.Pop(VmTypes.OfAccess(Access(operand, offset)));
+                    s.Pop(VmType.Ref);
                     return true;
 
                 case OpCode.Branch:
@@ -653,6 +768,14 @@ public static class Verifier
             }
 
             return _module.FieldType((int)index);
+        }
+
+        private void ValueClass(long index, int offset)
+        {
+            if (index >= _module.Classes.Count || !_module.Classes[(int)index].IsValueType)
+            {
+                throw Fail(offset, $"class {index} is not a value type");
+            }
         }
 
         private VmElementAccess Access(long value, int offset)

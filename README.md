@@ -25,7 +25,7 @@ dotnet run --project src/ZTX16.Host -- --exe samples/HelloSquare/bin/Debug/net10
 
 HelloSquare: arrows / WASD / D-pad / left stick move the square, Space toggles the scrolling background, Escape exits.
 
-A cartridge is one class implementing `ZTX16.ICartridge` (`Initialize`, `Tick`, `Render`, optional `Deinitialize`). The toolchain supports numeric types, `bool`, `char`, enums, classes with inheritance and virtual methods, interfaces, generics, arrays, strings (including `ToString()` of numbers) and null, on a garbage-collected heap. Collections come from `ZTX16.Collections` (`List<T>`, `Dictionary<K,V>`, `HashSet<T>`, `Stack<T>`, `Queue<T>`). Structs, lambdas, exceptions and `out` parameters are not supported yet and are reported as build errors.
+A cartridge is one class implementing `ZTX16.ICartridge` (`Initialize`, `Tick`, `Render`, optional `Deinitialize`). The toolchain supports numeric types, `bool`, `char`, enums, classes with inheritance and virtual methods, interfaces, generics, structs, arrays, strings (including `ToString()` of numbers) and null, on a garbage-collected heap. Collections come from `ZTX16.Collections` (`List<T>`, `Dictionary<K,V>`, `HashSet<T>`, `Stack<T>`, `Queue<T>`). Structs (with value semantics) and `ref`/`out`/`in` parameters are supported. Lambdas, exceptions, boxing, `int?` and tuples are not supported yet and are reported as build errors.
 
 ## Host options
 

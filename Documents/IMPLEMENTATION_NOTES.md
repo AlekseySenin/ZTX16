@@ -207,3 +207,48 @@ Project → Cartridge build (resources, Project Config, packed cartridge) is the
 Cartridges compile with **C# 12** (`LangVersion` in the cartridge targets). From C# 13 on, calls such as
 `string.Concat` with five or more parts bind to `params ReadOnlySpan<T>` overloads built on inline-array
 structs, which the VM does not support; C# 12 uses arrays.
+
+## VM-5 — structs and ref/out/in
+
+### Structs: heap instances with value semantics
+
+- A struct value is a reference to a value-type instance on the heap (`VmClass.IsValueType`). A **null
+  reference is the default value**: every field reads as zero (`LoadField` on a null value-type instance
+  yields 0), so `default`, `new S[n]` and fresh fields cost no allocation.
+- **Every storage location owns its own instance.** Assigning a struct to a local, argument, field, static
+  field or array element copies the fields into the location's instance (`Materialize*` creates it on
+  first use, `CopyInto` copies; nested struct fields are copied deeply). Two locations therefore never share
+  an instance, and writes through an address (`v.X = 1`, `arr[i].X = 1`, `obj.Pos.X = 1`, struct methods
+  mutating `this`) affect exactly that location.
+- **The address of a struct location is its instance.** `ldloca`/`ldflda`/`ldelema`/`ldsflda` on a struct
+  materialize and push the instance; struct instance methods receive it as `this`.
+- Reading a struct pushes the location's instance without copying; the copy happens when the value is
+  stored. A struct parameter is shared with the caller until the callee writes to it or takes its address —
+  then the callee copies it on entry.
+- **Known deviation:** a struct value read and then, within the same expression, overwritten in its source
+  location before being stored may observe the new contents (e.g. `F(a, a = b)`). Ordinary code is not
+  affected.
+- Struct equality used by `ZTX16.Collections` (`Intrinsics.Equal`/`Hash`, e.g. dictionary keys) compares
+  fields by value, like the default `ValueType.Equals`. **User overrides of `Equals`/`GetHashCode` on
+  structs are not used** by collections.
+- Every `new S(...)` allocates a temporary instance; struct-heavy inner loops create garbage. Scalar
+  replacement is a possible future optimization.
+- Not supported: boxing (struct → `object`/interface), `constrained.` calls (`ToString()`/`Equals()` on a
+  struct or generic `T`), `Nullable<T>` (`int?`), tuples (`ValueTuple`), ref fields, explicit layouts.
+
+### ref / out / in and ref locals
+
+- A managed pointer to a non-struct location is a **pointer object**: to a field, an array element, a
+  global, or a **cell**. Locals and parameters whose address is taken (non-struct) are moved into cells
+  for the whole method, so the variable and all pointers to it always agree.
+- Pointers record the declared type of the location, so writes narrow correctly (`stind.i1` into a `byte`
+  stores 255, not -1).
+- Supported: `ref`/`out`/`in` parameters of any supported type, `ref` locals, `ref` to fields, array
+  elements and static fields, `ldind`/`stind`/`ldobj`/`stobj`/`initobj`.
+- `Dictionary.TryGetValue` is now available.
+
+### Other
+
+- Constant array initializers (`new int[] { 1, 2, 3 }`, compiled to `RuntimeHelpers.InitializeArray` with
+  embedded data) are expanded into element stores.
+- Executable format version 3 (value-type flag and nested value fields per class).

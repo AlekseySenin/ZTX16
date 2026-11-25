@@ -17,15 +17,35 @@ internal sealed class MethodTranslator
     private readonly FunctionBuilder _function;
     private readonly string _name;
     private readonly VmTypeInfo[] _args;
+    private readonly ClrType[] _argTypes;
     private readonly ClrType _returnType;
     private VmTypeInfo[] _locals = [];
+    private ClrType[] _localTypes = [];
+    private VariableKind[] _localKinds = [];
+    private VariableKind[] _argKinds = [];
+    private int[] _argCells = [];
     private readonly Dictionary<int, Label> _labels = [];
     private readonly Dictionary<int, VmType[]> _stackAtTarget = [];
     private List<VmType> _stack = [];
     private bool _reachable = true;
     private int _offset;
     private int? _switchTemp;
+    private int? _structTemp;
+    private VmElementAccess? _lastNewArrayAccess;
     private readonly GenericContext _generic;
+
+    /// <summary>How a local or argument is stored.</summary>
+    private enum VariableKind
+    {
+        /// <summary>A VM local holding the value.</summary>
+        Plain,
+
+        /// <summary>A struct: the VM local holds the instance; stores copy into it.</summary>
+        Struct,
+
+        /// <summary>A non-struct variable whose address is taken: it lives in a heap cell.</summary>
+        Cell,
+    }
 
     public MethodTranslator(TranslationContext context, MethodDefinition method, GenericContext generic, FunctionBuilder function)
     {
@@ -35,8 +55,9 @@ internal sealed class MethodTranslator
         _function = function;
         _name = function.Name;
         MethodSignature<ClrType> signature = method.DecodeSignature(context.TypeProvider, generic);
-        IEnumerable<VmTypeInfo> args = signature.ParameterTypes.Select((t, i) => ClrTypeMapping.MapValue(t, $"{_name} parameter {i}"));
-        _args = (method.IsStatic() ? args : args.Prepend(new VmTypeInfo(VmType.Ref, null))).ToArray(); // IL arg 0 is 'this'
+        IEnumerable<ClrType> argTypes = method.IsStatic() ? signature.ParameterTypes : signature.ParameterTypes.Prepend(new ObjectClrType());
+        _argTypes = argTypes.ToArray(); // IL arg 0 is 'this' for instance methods (a reference, also for structs)
+        _args = _argTypes.Select((t, i) => ClrTypeMapping.MapValue(t, $"{_name} parameter {i}")).ToArray();
         _returnType = signature.ReturnType;
     }
 
@@ -56,13 +77,8 @@ internal sealed class MethodTranslator
         if (!body.LocalSignature.IsNil)
         {
             StandaloneSignature signature = _context.Reader.GetStandaloneSignature(body.LocalSignature);
-            _locals = signature.DecodeLocalSignature(_context.TypeProvider, _generic)
-                .Select((t, i) => ClrTypeMapping.MapValue(t, $"{_name} local {i}"))
-                .ToArray();
-            foreach (VmTypeInfo local in _locals)
-            {
-                _function.AddLocal(local.Type!.Value);
-            }
+            _localTypes = signature.DecodeLocalSignature(_context.TypeProvider, _generic).ToArray();
+            _locals = _localTypes.Select((t, i) => ClrTypeMapping.MapValue(t, $"{_name} local {i}")).ToArray();
         }
 
         List<IlInstruction> instructions = IlDecoder.Decode(body);
@@ -79,6 +95,9 @@ internal sealed class MethodTranslator
             }
         }
 
+        PlanVariables(instructions);
+        EmitPrologue();
+
         for (int i = 0; i < instructions.Count; i++)
         {
             IlInstruction instruction = instructions[i];
@@ -93,29 +112,28 @@ internal sealed class MethodTranslator
                 continue; // dead code that no branch reaches
             }
 
-            // default(T) idiom: ldloca V; initobj T  →  V = zero
-            if (instruction.OpCode is ILOpCode.Ldloca or ILOpCode.Ldloca_s
-                && i + 1 < instructions.Count && instructions[i + 1].OpCode == ILOpCode.Initobj
-                && !_labels.ContainsKey(instructions[i + 1].Offset))
+            switch (FusedPatternAt(instructions, i))
             {
-                ZeroLocal((int)instruction.Operand);
-                i++;
-                continue;
-            }
+                case FusedPattern.ZeroLocal:
+                    // default(T) idiom: ldloca V; initobj T  →  V = default
+                    ZeroLocal((int)instruction.Operand);
+                    i++;
+                    continue;
 
-            // primitive.ToString() idiom: ldloca/ldarga/ldflda/ldsflda; call T::ToString()  →  load; ToText
-            if (instruction.OpCode is ILOpCode.Ldloca or ILOpCode.Ldloca_s or ILOpCode.Ldarga or ILOpCode.Ldarga_s
-                    or ILOpCode.Ldflda or ILOpCode.Ldsflda
-                && i + 1 < instructions.Count && instructions[i + 1].OpCode == ILOpCode.Call
-                && !_labels.ContainsKey(instructions[i + 1].Offset)
-                && _context.PrimitiveToString(MetadataTokens.EntityHandle((int)instructions[i + 1].Operand)) is { } format)
-            {
-                LoadByAddressInstruction(instruction);
-                _function.Emit(OpCode.ToText, (int)format);
-                PopAny();
-                Push(VmType.Ref);
-                i++;
-                continue;
+                case FusedPattern.ArrayInitializer:
+                    // new T[] { constants }: newarr; dup; ldtoken <data>; call RuntimeHelpers.InitializeArray
+                    EmitArrayInitializer(_context.FieldInitialData(MetadataTokens.EntityHandle((int)instructions[i + 1].Operand), Where));
+                    i += 2;
+                    continue;
+
+                case FusedPattern.PrimitiveToString:
+                    // primitive.ToString() idiom: ldloca/ldarga/ldflda/ldsflda; call T::ToString()  →  load; ToText
+                    LoadByAddressInstruction(instruction);
+                    _function.Emit(OpCode.ToText, (int)_context.PrimitiveToString(MetadataTokens.EntityHandle((int)instructions[i + 1].Operand))!.Value);
+                    PopAny();
+                    Push(VmType.Ref);
+                    i++;
+                    continue;
             }
 
             TranslateInstruction(instruction);
@@ -126,6 +144,172 @@ internal sealed class MethodTranslator
             throw Error("control falls off the end of the method");
         }
     }
+
+    private enum FusedPattern
+    {
+        None,
+        ZeroLocal,
+        PrimitiveToString,
+        ArrayInitializer,
+    }
+
+    /// <summary>Stores constant initializer data into the array on top of the stack (which stays there).</summary>
+    private void EmitArrayInitializer(byte[] data)
+    {
+        VmElementAccess access = _lastNewArrayAccess ?? throw Error("array initializer without a preceding newarr");
+        int size = access switch
+        {
+            VmElementAccess.I8 or VmElementAccess.U8 => 1,
+            VmElementAccess.I16 or VmElementAccess.U16 => 2,
+            VmElementAccess.I32 or VmElementAccess.F32 => 4,
+            VmElementAccess.I64 or VmElementAccess.F64 => 8,
+            _ => throw Error("array initializer data for reference elements"),
+        };
+
+        for (int index = 0; index + size <= data.Length; index += size)
+        {
+            ReadOnlySpan<byte> bytes = data.AsSpan(index, size);
+            _function.Emit(OpCode.Dup).ConstI32(index / size);
+            switch (access)
+            {
+                case VmElementAccess.I8: _function.ConstI32((sbyte)bytes[0]); break;
+                case VmElementAccess.U8: _function.ConstI32(bytes[0]); break;
+                case VmElementAccess.I16: _function.ConstI32(BitConverter.ToInt16(bytes)); break;
+                case VmElementAccess.U16: _function.ConstI32(BitConverter.ToUInt16(bytes)); break;
+                case VmElementAccess.I32: _function.ConstI32(BitConverter.ToInt32(bytes)); break;
+                case VmElementAccess.F32: _function.ConstF32(BitConverter.ToSingle(bytes)); break;
+                case VmElementAccess.I64: _function.ConstI64(BitConverter.ToInt64(bytes)); break;
+                default: _function.ConstF64(BitConverter.ToDouble(bytes)); break;
+            }
+
+            _function.Emit(OpCode.StoreElement, (int)access);
+        }
+    }
+
+    /// <summary>Two-instruction idioms translated as a unit (they take an address only to use it at once).</summary>
+    private FusedPattern FusedPatternAt(List<IlInstruction> instructions, int i)
+    {
+        if (i + 1 >= instructions.Count || _labels.ContainsKey(instructions[i + 1].Offset))
+        {
+            return FusedPattern.None;
+        }
+
+        ILOpCode op = instructions[i].OpCode;
+        IlInstruction next = instructions[i + 1];
+        if (op == ILOpCode.Dup && next.OpCode == ILOpCode.Ldtoken
+            && i + 2 < instructions.Count && instructions[i + 2].OpCode == ILOpCode.Call && !_labels.ContainsKey(instructions[i + 2].Offset)
+            && _context.IsInitializeArray(MetadataTokens.EntityHandle((int)instructions[i + 2].Operand)))
+        {
+            return FusedPattern.ArrayInitializer;
+        }
+
+        if (op is ILOpCode.Ldloca or ILOpCode.Ldloca_s && next.OpCode == ILOpCode.Initobj)
+        {
+            return FusedPattern.ZeroLocal;
+        }
+
+        if (op is ILOpCode.Ldloca or ILOpCode.Ldloca_s or ILOpCode.Ldarga or ILOpCode.Ldarga_s or ILOpCode.Ldflda or ILOpCode.Ldsflda
+            && next.OpCode == ILOpCode.Call
+            && _context.PrimitiveToString(MetadataTokens.EntityHandle((int)next.Operand)) is not null)
+        {
+            return FusedPattern.PrimitiveToString;
+        }
+
+        return FusedPattern.None;
+    }
+
+    /// <summary>
+    /// Decides how each local and argument is stored: structs keep their instance in the VM slot,
+    /// non-struct variables whose address is taken move into heap cells.
+    /// </summary>
+    private void PlanVariables(List<IlInstruction> instructions)
+    {
+        var addressedLocals = new HashSet<int>();
+        var addressedArgs = new HashSet<int>();
+        var storedArgs = new HashSet<int>();
+        for (int i = 0; i < instructions.Count; i++)
+        {
+            if (FusedPatternAt(instructions, i) != FusedPattern.None)
+            {
+                i++;
+                continue;
+            }
+
+            switch (instructions[i].OpCode)
+            {
+                case ILOpCode.Ldloca or ILOpCode.Ldloca_s: addressedLocals.Add((int)instructions[i].Operand); break;
+                case ILOpCode.Ldarga or ILOpCode.Ldarga_s: addressedArgs.Add((int)instructions[i].Operand); break;
+                case ILOpCode.Starg or ILOpCode.Starg_s: storedArgs.Add((int)instructions[i].Operand); break;
+            }
+        }
+
+        _localKinds = new VariableKind[_locals.Length];
+        for (int i = 0; i < _locals.Length; i++)
+        {
+            _localKinds[i] = ClrTypeMapping.IsStruct(_localTypes[i]) ? VariableKind.Struct
+                : addressedLocals.Contains(i) ? VariableKind.Cell
+                : VariableKind.Plain;
+            _function.AddLocal(_localKinds[i] == VariableKind.Plain ? _locals[i].Type!.Value : VmType.Ref);
+        }
+
+        _argKinds = new VariableKind[_args.Length];
+        _argCells = new int[_args.Length];
+        for (int i = 0; i < _args.Length; i++)
+        {
+            bool isThis = i == 0 && !_method.IsStatic();
+            if (isThis || _argTypes[i] is ByRefClrType)
+            {
+                if (addressedArgs.Contains(i))
+                {
+                    throw Error($"taking the address of {(isThis ? "'this'" : "a ref parameter")} is not supported");
+                }
+
+                _argKinds[i] = VariableKind.Plain;
+            }
+            else if (ClrTypeMapping.IsStruct(_argTypes[i]))
+            {
+                _argKinds[i] = VariableKind.Struct;
+                _argCells[i] = addressedArgs.Contains(i) || storedArgs.Contains(i) ? 1 : 0; // 1 = copy on entry
+            }
+            else if (addressedArgs.Contains(i))
+            {
+                _argKinds[i] = VariableKind.Cell;
+                _argCells[i] = _function.AddLocal(VmType.Ref);
+            }
+        }
+    }
+
+    private void EmitPrologue()
+    {
+        for (int i = 0; i < _locals.Length; i++)
+        {
+            if (_localKinds[i] == VariableKind.Cell)
+            {
+                _function.Emit(OpCode.NewCell, (int)CellAccess(_localTypes[i])).Emit(OpCode.StoreLocal, _args.Length + i);
+            }
+        }
+
+        for (int i = 0; i < _args.Length; i++)
+        {
+            switch (_argKinds[i])
+            {
+                case VariableKind.Cell:
+                    {
+                        VmElementAccess access = CellAccess(_argTypes[i]);
+                        _function.Emit(OpCode.NewCell, (int)access).Emit(OpCode.Dup).Emit(OpCode.LoadLocal, i)
+                            .Emit(OpCode.StoreIndirect, (int)access).Emit(OpCode.StoreLocal, _argCells[i]);
+                        break;
+                    }
+
+                case VariableKind.Struct when _argCells[i] == 1:
+                    // The caller's value is shared until now; this method modifies its parameter, so copy it.
+                    _function.Emit(OpCode.LoadLocal, i).Emit(OpCode.Clone).Emit(OpCode.StoreLocal, i);
+                    break;
+            }
+        }
+    }
+
+    private VmElementAccess CellAccess(ClrType type) => ClrTypeMapping.ElementAccess(type, Where);
 
     private void TranslateInstruction(IlInstruction ins)
     {
@@ -324,11 +508,140 @@ internal sealed class MethodTranslator
 
             case ILOpCode.Stfld:
                 {
-                    (int index, VmTypeInfo type) = _context.GetInstanceField(MetadataTokens.EntityHandle((int)ins.Operand), _generic, Where);
-                    Pop(type.Type!.Value, "field value");
+                    FieldRef field = _context.GetInstanceField(MetadataTokens.EntityHandle((int)ins.Operand), _generic, Where);
+                    Pop(field.Type.Type!.Value, "field value");
                     Pop(VmType.Ref, "field owner");
-                    EmitNarrow(type);
-                    _function.Emit(OpCode.StoreField, index);
+                    if (ClrTypeMapping.IsStruct(field.Clr))
+                    {
+                        // [owner, value] → copy the value into the field's own instance.
+                        _function.Emit(OpCode.Swap).Emit(OpCode.MaterializeField, field.Index, _context.StructClass(field.Clr, Where))
+                            .Emit(OpCode.Swap).Emit(OpCode.CopyInto);
+                        return;
+                    }
+
+                    EmitNarrow(field.Type);
+                    _function.Emit(OpCode.StoreField, field.Index);
+                    return;
+                }
+
+            case ILOpCode.Ldflda:
+                {
+                    FieldRef field = _context.GetInstanceField(MetadataTokens.EntityHandle((int)ins.Operand), _generic, Where);
+                    Pop(VmType.Ref, "field owner");
+                    if (ClrTypeMapping.IsStruct(field.Clr))
+                    {
+                        _function.Emit(OpCode.MaterializeField, field.Index, _context.StructClass(field.Clr, Where));
+                    }
+                    else
+                    {
+                        _function.Emit(OpCode.FieldPointer, field.Index, (int)CellAccess(field.Clr));
+                    }
+
+                    Push(VmType.Ref);
+                    return;
+                }
+
+            case ILOpCode.Ldsflda:
+                {
+                    FieldRef global = _context.GetGlobal(MetadataTokens.EntityHandle((int)ins.Operand), _generic, Where);
+                    if (ClrTypeMapping.IsStruct(global.Clr))
+                    {
+                        _function.Emit(OpCode.MaterializeGlobal, global.Index, _context.StructClass(global.Clr, Where));
+                    }
+                    else
+                    {
+                        _function.Emit(OpCode.GlobalPointer, global.Index, (int)CellAccess(global.Clr));
+                    }
+
+                    Push(VmType.Ref);
+                    return;
+                }
+
+            case ILOpCode.Ldloca or ILOpCode.Ldloca_s:
+                AddressOfLocal((int)ins.Operand);
+                return;
+
+            case ILOpCode.Ldarga or ILOpCode.Ldarga_s:
+                AddressOfArg((int)ins.Operand);
+                return;
+
+            case ILOpCode.Ldelema:
+                {
+                    ClrType element = _context.ResolveTypeToken(MetadataTokens.EntityHandle((int)ins.Operand), _generic);
+                    Pop(VmType.I32, "array index");
+                    Pop(VmType.Ref, "array");
+                    if (ClrTypeMapping.IsStruct(element))
+                    {
+                        _function.Emit(OpCode.MaterializeElement, _context.StructClass(element, Where));
+                    }
+                    else
+                    {
+                        _function.Emit(OpCode.ElementPointer, (int)ClrTypeMapping.ElementAccess(element, Where));
+                    }
+
+                    Push(VmType.Ref);
+                    return;
+                }
+
+            case ILOpCode.Ldind_i1: LoadIndirect(VmElementAccess.I8); return;
+            case ILOpCode.Ldind_u1: LoadIndirect(VmElementAccess.U8); return;
+            case ILOpCode.Ldind_i2: LoadIndirect(VmElementAccess.I16); return;
+            case ILOpCode.Ldind_u2: LoadIndirect(VmElementAccess.U16); return;
+            case ILOpCode.Ldind_i4 or ILOpCode.Ldind_u4: LoadIndirect(VmElementAccess.I32); return;
+            case ILOpCode.Ldind_i8: LoadIndirect(VmElementAccess.I64); return;
+            case ILOpCode.Ldind_r4: LoadIndirect(VmElementAccess.F32); return;
+            case ILOpCode.Ldind_r8: LoadIndirect(VmElementAccess.F64); return;
+            case ILOpCode.Ldind_ref: LoadIndirect(VmElementAccess.Ref); return;
+            case ILOpCode.Stind_i1: StoreIndirect(VmElementAccess.I8); return;
+            case ILOpCode.Stind_i2: StoreIndirect(VmElementAccess.I16); return;
+            case ILOpCode.Stind_i4: StoreIndirect(VmElementAccess.I32); return;
+            case ILOpCode.Stind_i8: StoreIndirect(VmElementAccess.I64); return;
+            case ILOpCode.Stind_r4: StoreIndirect(VmElementAccess.F32); return;
+            case ILOpCode.Stind_r8: StoreIndirect(VmElementAccess.F64); return;
+            case ILOpCode.Stind_ref: StoreIndirect(VmElementAccess.Ref); return;
+
+            case ILOpCode.Ldobj:
+                {
+                    ClrType type = _context.ResolveTypeToken(MetadataTokens.EntityHandle((int)ins.Operand), _generic);
+                    if (!ClrTypeMapping.IsStruct(type))
+                    {
+                        LoadIndirect(ClrTypeMapping.ElementAccess(type, Where));
+                    }
+
+                    // A struct address is its instance, which is also its value (stores copy).
+                    return;
+                }
+
+            case ILOpCode.Stobj:
+                {
+                    ClrType type = _context.ResolveTypeToken(MetadataTokens.EntityHandle((int)ins.Operand), _generic);
+                    if (ClrTypeMapping.IsStruct(type))
+                    {
+                        EmitStructStoreThroughAddress();
+                    }
+                    else
+                    {
+                        StoreIndirect(ClrTypeMapping.ElementAccess(type, Where));
+                    }
+
+                    return;
+                }
+
+            case ILOpCode.Initobj:
+                {
+                    ClrType type = _context.ResolveTypeToken(MetadataTokens.EntityHandle((int)ins.Operand), _generic);
+                    if (ClrTypeMapping.IsStruct(type))
+                    {
+                        _function.Emit(OpCode.ConstNull); // copying the default value zeroes the instance
+                        Push(VmType.Ref);
+                        EmitStructStoreThroughAddress();
+                    }
+                    else
+                    {
+                        EmitZero(ClrTypeMapping.MapValue(type, Where).Type!.Value);
+                        StoreIndirect(ClrTypeMapping.ElementAccess(type, Where));
+                    }
+
                     return;
                 }
 
@@ -352,6 +665,7 @@ internal sealed class MethodTranslator
                     Pop(VmType.I32, "array length");
                     _function.Emit(OpCode.NewArray, (int)VmTypes.StorageOf(access));
                     Push(VmType.Ref);
+                    _lastNewArrayAccess = access;
                     return;
                 }
 
@@ -382,8 +696,25 @@ internal sealed class MethodTranslator
             case ILOpCode.Stelem_r8: StoreElement(VmElementAccess.F64); return;
             case ILOpCode.Stelem_ref: StoreElement(VmElementAccess.Ref); return;
             case ILOpCode.Stelem:
-                StoreElement(ClrTypeMapping.ElementAccess(_context.ResolveTypeToken(MetadataTokens.EntityHandle((int)ins.Operand), _generic), Where));
-                return;
+                {
+                    ClrType element = _context.ResolveTypeToken(MetadataTokens.EntityHandle((int)ins.Operand), _generic);
+                    if (ClrTypeMapping.IsStruct(element))
+                    {
+                        // [array, index, value] → copy the value into the element's own instance.
+                        Pop(VmType.Ref, "array element");
+                        Pop(VmType.I32, "array index");
+                        Pop(VmType.Ref, "array");
+                        int temp = StructTemp();
+                        _function.Emit(OpCode.StoreLocal, temp)
+                            .Emit(OpCode.MaterializeElement, _context.StructClass(element, Where))
+                            .Emit(OpCode.LoadLocal, temp)
+                            .Emit(OpCode.CopyInto);
+                        return;
+                    }
+
+                    StoreElement(ClrTypeMapping.ElementAccess(element, Where));
+                    return;
+                }
 
             case ILOpCode.Ldstr:
                 _function.Emit(OpCode.LoadString, _context.AddString(_context.UserString((int)ins.Operand)));
@@ -400,10 +731,17 @@ internal sealed class MethodTranslator
 
             case ILOpCode.Stsfld:
                 {
-                    (int index, VmTypeInfo type) = _context.GetGlobal(MetadataTokens.EntityHandle((int)ins.Operand), _generic, Where);
-                    Pop(type.Type!.Value);
-                    EmitNarrow(type);
-                    _function.Emit(OpCode.StoreGlobal, index);
+                    FieldRef global = _context.GetGlobal(MetadataTokens.EntityHandle((int)ins.Operand), _generic, Where);
+                    Pop(global.Type.Type!.Value);
+                    if (ClrTypeMapping.IsStruct(global.Clr))
+                    {
+                        _function.Emit(OpCode.MaterializeGlobal, global.Index, _context.StructClass(global.Clr, Where))
+                            .Emit(OpCode.Swap).Emit(OpCode.CopyInto);
+                        return;
+                    }
+
+                    EmitNarrow(global.Type);
+                    _function.Emit(OpCode.StoreGlobal, global.Index);
                     return;
                 }
 
@@ -416,9 +754,8 @@ internal sealed class MethodTranslator
     {
         ILOpCode.Box or ILOpCode.Unbox or ILOpCode.Unbox_any => " (boxing is not supported; avoid passing value types as object)",
         ILOpCode.Ldftn or ILOpCode.Ldvirtftn => " (delegates and lambdas are not supported yet)",
-        ILOpCode.Initobj or ILOpCode.Ldobj or ILOpCode.Stobj => " (structs are not supported yet)",
-        ILOpCode.Ldelema => " (element addresses and ref locals are not supported)",
-        ILOpCode.Ldflda or ILOpCode.Ldloca or ILOpCode.Ldloca_s or ILOpCode.Ldarga or ILOpCode.Ldarga_s or ILOpCode.Ldsflda => " (addresses and ref parameters are not supported)",
+        ILOpCode.Constrained => " (calls through 'constrained.', e.g. ToString()/Equals() on a generic T or a struct, are not supported)",
+        ILOpCode.Ldind_i or ILOpCode.Stind_i or ILOpCode.Ldelem_i or ILOpCode.Stelem_i => " (native integers are not part of the ZTX16 model)",
         ILOpCode.Throw => " (exceptions are not supported yet)",
         >= ILOpCode.Conv_ovf_i1_un and <= ILOpCode.Conv_ovf_u_un or >= ILOpCode.Conv_ovf_i1 and <= ILOpCode.Conv_ovf_u8
             or ILOpCode.Add_ovf or ILOpCode.Add_ovf_un or ILOpCode.Sub_ovf or ILOpCode.Sub_ovf_un
@@ -430,31 +767,100 @@ internal sealed class MethodTranslator
 
     private void LoadArg(int index)
     {
-        _function.Emit(OpCode.LoadLocal, CheckArg(index));
-        Push(_args[index].Type!.Value);
+        CheckArg(index);
+        LoadVariable(_argKinds[index], index, _argCells[index], _args[index], _argTypes[index]);
     }
 
     private void StoreArg(int index)
     {
         CheckArg(index);
-        Pop(_args[index].Type!.Value);
-        EmitNarrow(_args[index]);
-        _function.Emit(OpCode.StoreLocal, index);
+        StoreVariable(_argKinds[index], index, _argCells[index], _args[index], _argTypes[index]);
+    }
+
+    private void AddressOfArg(int index)
+    {
+        CheckArg(index);
+        AddressOfVariable(_argKinds[index], index, _argCells[index], _argTypes[index], "argument");
     }
 
     private void LoadLocal(int index)
     {
-        _function.Emit(OpCode.LoadLocal, CheckLocal(index));
-        Push(_locals[index].Type!.Value);
+        int slot = CheckLocal(index);
+        LoadVariable(_localKinds[index], slot, slot, _locals[index], _localTypes[index]);
     }
 
     private void StoreLocal(int index)
     {
         int slot = CheckLocal(index);
-        Pop(_locals[index].Type!.Value);
-        EmitNarrow(_locals[index]);
-        _function.Emit(OpCode.StoreLocal, slot);
+        StoreVariable(_localKinds[index], slot, slot, _locals[index], _localTypes[index]);
     }
+
+    private void AddressOfLocal(int index)
+    {
+        int slot = CheckLocal(index);
+        AddressOfVariable(_localKinds[index], slot, slot, _localTypes[index], "local");
+    }
+
+    // slot: the VM local holding the value or struct instance; cell: the VM local holding the cell (Cell kind).
+    private void LoadVariable(VariableKind kind, int slot, int cell, VmTypeInfo type, ClrType clr)
+    {
+        if (kind == VariableKind.Cell)
+        {
+            _function.Emit(OpCode.LoadLocal, cell).Emit(OpCode.LoadIndirect, (int)CellAccess(clr));
+        }
+        else
+        {
+            _function.Emit(OpCode.LoadLocal, slot); // a struct loads as its instance; stores copy, so sharing is safe
+        }
+
+        Push(type.Type!.Value);
+    }
+
+    private void StoreVariable(VariableKind kind, int slot, int cell, VmTypeInfo type, ClrType clr)
+    {
+        Pop(type.Type!.Value);
+        switch (kind)
+        {
+            case VariableKind.Struct:
+                // Copy the value into the variable's own instance (created on first use).
+                _function.Emit(OpCode.MaterializeLocal, slot, _context.StructClass(clr, Where)).Emit(OpCode.Swap).Emit(OpCode.CopyInto);
+                break;
+            case VariableKind.Cell:
+                _function.Emit(OpCode.LoadLocal, cell).Emit(OpCode.Swap).Emit(OpCode.StoreIndirect, (int)CellAccess(clr));
+                break;
+            default:
+                EmitNarrow(type);
+                _function.Emit(OpCode.StoreLocal, slot);
+                break;
+        }
+    }
+
+    private void AddressOfVariable(VariableKind kind, int slot, int cell, ClrType clr, string what)
+    {
+        switch (kind)
+        {
+            case VariableKind.Struct:
+                _function.Emit(OpCode.MaterializeLocal, slot, _context.StructClass(clr, Where));
+                break;
+            case VariableKind.Cell:
+                _function.Emit(OpCode.LoadLocal, cell);
+                break;
+            default:
+                throw Error($"internal toolchain error: address of a plain {what}");
+        }
+
+        Push(VmType.Ref);
+    }
+
+    /// <summary>Stores the struct value on top of the stack into the instance address below it.</summary>
+    private void EmitStructStoreThroughAddress()
+    {
+        Pop(VmType.Ref, "struct value");
+        Pop(VmType.Ref, "struct address");
+        _function.Emit(OpCode.CopyInto);
+    }
+
+    private int StructTemp() => _structTemp ??= _function.AddLocal(VmType.Ref);
 
     /// <summary>Loads the value whose address an ldloca/ldarga/ldflda/ldsflda instruction would take.</summary>
     private void LoadByAddressInstruction(IlInstruction ins)
@@ -488,8 +894,15 @@ internal sealed class MethodTranslator
 
     private void ZeroLocal(int index)
     {
-        int slot = CheckLocal(index);
-        switch (_locals[index].Type)
+        CheckLocal(index);
+        EmitZero(_locals[index].Type!.Value);
+        StoreLocal(index);
+    }
+
+    /// <summary>Pushes the default value of a VM type (null is also the default struct).</summary>
+    private void EmitZero(VmType type)
+    {
+        switch (type)
         {
             case VmType.I32: _function.ConstI32(0); break;
             case VmType.I64: _function.ConstI64(0); break;
@@ -498,7 +911,7 @@ internal sealed class MethodTranslator
             default: _function.Emit(OpCode.ConstNull); break;
         }
 
-        _function.Emit(OpCode.StoreLocal, slot);
+        Push(type);
     }
 
     private int CheckArg(int index) =>
@@ -874,6 +1287,20 @@ internal sealed class MethodTranslator
         Pop(VmType.Ref, "array");
         _function.Emit(OpCode.LoadElement, (int)access);
         Push(VmTypes.OfAccess(access));
+    }
+
+    private void LoadIndirect(VmElementAccess access)
+    {
+        Pop(VmType.Ref, "address");
+        _function.Emit(OpCode.LoadIndirect, (int)access);
+        Push(VmTypes.OfAccess(access));
+    }
+
+    private void StoreIndirect(VmElementAccess access)
+    {
+        Pop(VmTypes.OfAccess(access), "value");
+        Pop(VmType.Ref, "address");
+        _function.Emit(OpCode.StoreIndirect, (int)access);
     }
 
     private void StoreElement(VmElementAccess access)

@@ -66,6 +66,17 @@ internal sealed class ClassInfo
     public List<ClassInfo> DirectInterfaces { get; } = [];
 }
 
+/// <summary>A resolved field: VM index (field or global), storage type and CLR type.</summary>
+internal sealed record FieldRef(int Index, VmTypeInfo Type, ClrType Clr)
+{
+    /// <summary>Deconstructs into index and storage type.</summary>
+    public void Deconstruct(out int index, out VmTypeInfo type)
+    {
+        index = Index;
+        type = Type;
+    }
+}
+
 /// <summary>A virtual-method or interface-method slot.</summary>
 internal sealed record SelectorInfo(int Index, string Name, string SignatureKey, ClassInfo? Interface);
 
@@ -82,8 +93,8 @@ internal sealed class TranslationContext
     private readonly ModuleBuilder _module = new();
     private readonly Dictionary<string, FunctionBuilder> _functions = new(StringComparer.Ordinal);
     private readonly Queue<(MethodDefinitionHandle Handle, GenericContext Context, FunctionBuilder Builder)> _pending = new();
-    private readonly Dictionary<string, (int Index, VmTypeInfo Type)> _globals = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, (int Index, VmTypeInfo Type)> _instanceFields = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, FieldRef> _globals = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, FieldRef> _instanceFields = new(StringComparer.Ordinal);
     private readonly HashSet<string> _functionNames = new(StringComparer.Ordinal);
     private readonly Dictionary<string, (TypeDefinitionHandle Handle, GenericContext Context)> _touchedTypes = new(StringComparer.Ordinal);
     private readonly Dictionary<string, FunctionBuilder?> _staticConstructors = new(StringComparer.Ordinal);
@@ -234,7 +245,7 @@ internal sealed class TranslationContext
 
         GenericContext context = type.Context;
         ClassInfo? baseClass = null;
-        if (!type.IsInterface)
+        if (!type.IsInterface && !type.IsValueType)
         {
             ClrType? baseType = definition.BaseType.IsNil ? null : ResolveTypeToken(definition.BaseType, context);
             baseClass = baseType switch
@@ -248,6 +259,7 @@ internal sealed class TranslationContext
 
         var fields = new List<VmType>(baseClass?.Builder.Fields ?? []);
         var slots = new Dictionary<FieldDefinitionHandle, int>();
+        var structSlots = new Dictionary<int, ClassClrType>();
         foreach (FieldDefinitionHandle fieldHandle in definition.GetFields())
         {
             FieldDefinition field = Reader.GetFieldDefinition(fieldHandle);
@@ -256,8 +268,19 @@ internal sealed class TranslationContext
                 continue;
             }
 
+            ClrType fieldType = field.DecodeSignature(TypeProvider, context);
+            if (fieldType is ByRefClrType)
+            {
+                throw new TranslationException($"{where}: ref fields are not supported.");
+            }
+
             slots[fieldHandle] = fields.Count;
-            fields.Add(ClrTypeMapping.MapValue(field.DecodeSignature(TypeProvider, context), $"field '{type.Display}.{Reader.GetString(field.Name)}'").Type!.Value);
+            if (ClrTypeMapping.IsStruct(fieldType))
+            {
+                structSlots[fields.Count] = (ClassClrType)fieldType;
+            }
+
+            fields.Add(ClrTypeMapping.MapValue(fieldType, $"field '{type.Display}.{Reader.GetString(field.Name)}'").Type!.Value);
         }
 
         var info = new ClassInfo
@@ -267,6 +290,7 @@ internal sealed class TranslationContext
             Base = baseClass,
             Builder = _module.DefineClass(type.Display, baseClass?.Builder.Index ?? VmClass.NoBase, type.IsInterface, fields),
         };
+        info.Builder.IsValueType = type.IsValueType;
         foreach ((FieldDefinitionHandle fieldHandle, int slot) in slots)
         {
             info.Slots[fieldHandle] = slot;
@@ -275,6 +299,15 @@ internal sealed class TranslationContext
         _classes[type.Display] = info;
         _classList.Add(info);
         Touch(type.Handle, context);
+
+        if (type.IsValueType)
+        {
+            // Nested struct values are deep-copied along with the struct that contains them.
+            foreach ((int slot, ClassClrType nested) in structSlots)
+            {
+                info.Builder.ValueFields[slot] = GetClass(nested, where).Builder.Index;
+            }
+        }
 
         foreach (InterfaceImplementationHandle implHandle in definition.GetInterfaceImplementations())
         {
@@ -762,11 +795,11 @@ internal sealed class TranslationContext
         return (ctor.Signature, f => f.New(owner.Builder.Index, ctor.Index));
     }
 
-    public (int Index, VmTypeInfo Type) GetInstanceField(EntityHandle handle, GenericContext context, string where)
+    public FieldRef GetInstanceField(EntityHandle handle, GenericContext context, string where)
     {
         (FieldDefinitionHandle fieldHandle, ClassClrType ownerType) = ResolveField(handle, context, where);
         string key = $"{ownerType.Display}::{MetadataTokens.GetRowNumber(fieldHandle)}";
-        if (_instanceFields.TryGetValue(key, out var existing))
+        if (_instanceFields.TryGetValue(key, out FieldRef? existing))
         {
             return existing;
         }
@@ -778,17 +811,18 @@ internal sealed class TranslationContext
             throw new TranslationException($"{where}: '{owner.Name}.{Reader.GetString(field.Name)}' is not an instance field.");
         }
 
-        VmTypeInfo type = ClrTypeMapping.MapValue(field.DecodeSignature(TypeProvider, ownerType.Context), $"field '{owner.Name}.{Reader.GetString(field.Name)}'");
-        var result = (_module.AddField(owner.Builder.Index, slot), type);
+        ClrType clr = field.DecodeSignature(TypeProvider, ownerType.Context);
+        VmTypeInfo type = ClrTypeMapping.MapValue(clr, $"field '{owner.Name}.{Reader.GetString(field.Name)}'");
+        var result = new FieldRef(_module.AddField(owner.Builder.Index, slot), type, clr);
         _instanceFields[key] = result;
         return result;
     }
 
-    public (int Index, VmTypeInfo Type) GetGlobal(EntityHandle handle, GenericContext context, string where)
+    public FieldRef GetGlobal(EntityHandle handle, GenericContext context, string where)
     {
         (FieldDefinitionHandle fieldHandle, ClassClrType ownerType) = ResolveField(handle, context, where);
         string key = $"{ownerType.Display}::{MetadataTokens.GetRowNumber(fieldHandle)}";
-        if (_globals.TryGetValue(key, out var existing))
+        if (_globals.TryGetValue(key, out FieldRef? existing))
         {
             return existing;
         }
@@ -800,12 +834,17 @@ internal sealed class TranslationContext
             throw new TranslationException($"{where}: '{name}' is an instance field.");
         }
 
-        VmTypeInfo type = ClrTypeMapping.MapValue(field.DecodeSignature(TypeProvider, ownerType.Context), $"field '{name}'");
+        ClrType clr = field.DecodeSignature(TypeProvider, ownerType.Context);
+        VmTypeInfo type = ClrTypeMapping.MapValue(clr, $"field '{name}'");
         int index = _module.AddGlobal(type.Type!.Value);
         Touch(ownerType.Handle, ownerType.Context);
-        _globals[key] = (index, type);
-        return (index, type);
+        var result = new FieldRef(index, type, clr);
+        _globals[key] = result;
+        return result;
     }
+
+    /// <summary>The VM class of a struct type (registering it if needed).</summary>
+    public int StructClass(ClrType type, string where) => GetClass((ClassClrType)type, where).Builder.Index;
 
     private (FieldDefinitionHandle Field, ClassClrType Owner) ResolveField(EntityHandle handle, GenericContext context, string where)
     {
@@ -850,6 +889,42 @@ internal sealed class TranslationContext
     }
 
     public int AddString(string value) => _module.AddString(value);
+
+    /// <summary>True for <c>System.Runtime.CompilerServices.RuntimeHelpers.InitializeArray</c>.</summary>
+    public bool IsInitializeArray(EntityHandle target) =>
+        target.Kind == HandleKind.MemberReference
+        && Reader.GetMemberReference((MemberReferenceHandle)target) is var reference
+        && Reader.GetString(reference.Name) == "InitializeArray"
+        && reference.Parent.Kind == HandleKind.TypeReference
+        && TypeReferenceName((TypeReferenceHandle)reference.Parent) == "System.Runtime.CompilerServices.RuntimeHelpers";
+
+    /// <summary>The constant data the compiler embedded for an array initializer (a field with an RVA).</summary>
+    public byte[] FieldInitialData(EntityHandle token, string where)
+    {
+        if (token.Kind != HandleKind.FieldDefinition)
+        {
+            throw new TranslationException($"{where}: unexpected array initializer token.");
+        }
+
+        FieldDefinition field = Reader.GetFieldDefinition((FieldDefinitionHandle)token);
+        int rva = field.GetRelativeVirtualAddress();
+        int size = field.DecodeSignature(TypeProvider, null) switch
+        {
+            ClassClrType holder => Reader.GetTypeDefinition(holder.Handle).GetLayout().Size,
+            PrimitiveClrType { Code: PrimitiveTypeCode.Byte or PrimitiveTypeCode.SByte } => 1,
+            PrimitiveClrType { Code: PrimitiveTypeCode.Int16 or PrimitiveTypeCode.UInt16 } => 2,
+            PrimitiveClrType { Code: PrimitiveTypeCode.Int32 or PrimitiveTypeCode.UInt32 } => 4,
+            PrimitiveClrType { Code: PrimitiveTypeCode.Int64 or PrimitiveTypeCode.UInt64 } => 8,
+            var other => throw new TranslationException($"{where}: unexpected array initializer data type '{other}'."),
+        };
+
+        if (rva == 0 || size <= 0)
+        {
+            throw new TranslationException($"{where}: array initializer has no data.");
+        }
+
+        return _pe.GetSectionData(rva).GetContent(0, size).ToArray();
+    }
 
     /// <summary>If <paramref name="target"/> is <c>ToString()</c> on a supported primitive, its format kind.</summary>
     public VmFormatKind? PrimitiveToString(EntityHandle target)
