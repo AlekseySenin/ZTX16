@@ -5,9 +5,10 @@ namespace HelloSquare;
 
 /// <summary>
 /// Sample cartridge: a ship sprite (from the "art" tilemap) with an animated engine flame, moved with the arrow keys,
-/// WASD, the D-pad or the left stick, rotated to face its direction and stopped by walls (collision), over a scrolling
-/// two-screen background, leaving a trail kept in a Queue, with text in the built-in font. Space toggles the background
-/// layer, P cycles through the Palette resources, C shows the colliders, Escape exits.
+/// WASD, the D-pad or the left stick, rotated to face its direction, over a scrolling two-screen background, leaving a
+/// trail kept in a Queue, with text in the built-in font. The "stage" Level supplies brick walls that stop the ship
+/// (collision) and gems it collects. Space toggles the background layer, P cycles through the Palette resources,
+/// C shows the colliders, Escape exits.
 /// </summary>
 public sealed class Game : ICartridge
 {
@@ -27,7 +28,10 @@ public sealed class Game : ICartridge
     private Sprite? ship;
     private float heading;
     private AnimationPlayback? engine;
-    private readonly ColliderSet walls = new();
+    private ColliderSet walls = new();
+    private LevelLayer? gems;
+    private int gemsCollected;
+    private readonly List<Collider> touched = new();
     private readonly Collider shipCollider = new(120, 120, Size, Size);
     private bool showColliders;
     private bool touching;
@@ -66,14 +70,15 @@ public sealed class Game : ICartridge
         Graphics.FillRect(Markers, 232, 252, 24, 4, 19);
         Graphics.FillRect(Markers, 252, 232, 4, 24, 19);
 
-        // Walls: drawn once, and the same rectangles are colliders.
-        walls.Add(new Collider(40, 60, 12, 120));
-        walls.Add(new Collider(170, 40, 40, 12));
-        walls.Add(new Collider(150, 170, 60, 12));
-        for (int i = 0; i < walls.Count; i++)
+        // The level's walls are drawn once into the Markers layer; their actors' colliders stop the ship.
+        // The gems are redrawn every frame because they disappear when collected.
+        if (Resources.Exists(ResourceType.Level, "stage"))
         {
-            Collider wall = walls[i];
-            Graphics.FillRect(Markers, wall.X, wall.Y, wall.Width, wall.Height, 27);
+            Level level = Level.Load("stage");
+            LevelLayer wallLayer = level.FindLayer("walls")!;
+            wallLayer.Rasterize(Markers);
+            walls = wallLayer.Colliders;
+            gems = level.FindLayer("gems");
         }
     }
 
@@ -115,6 +120,7 @@ public sealed class Game : ICartridge
         shipCollider.SetPosition(x, y);
         touching = hitX.Hit || hitY.Hit;
         engine?.Update();
+        CollectGems();
 
         // The ship points up at 0°; rotation is counter-clockwise.
         if (dx != 0 || dy != 0)
@@ -151,6 +157,7 @@ public sealed class Game : ICartridge
             age++;
         }
 
+        gems?.Rasterize(Sprites);
         if (ship is null)
         {
             Graphics.FillRect(Sprites, x, y, Size, Size, 11);
@@ -164,12 +171,46 @@ public sealed class Game : ICartridge
         if (showColliders)
         {
             CollisionDebug.Draw(Hud, walls, 15);
+            if (gems is not null)
+            {
+                CollisionDebug.Draw(Hud, gems.Colliders, 22);
+            }
+
             CollisionDebug.Draw(Hud, shipCollider, touching ? 7 : 17);
         }
 
         Text.Draw(Hud, "HELLO " + TextStyle.Color(11) + "ZTX16", 8, 242, 5, "");
+        if (gems is not null)
+        {
+            string count = gemsCollected == gems.ActorCount ? TextStyle.Color(15) + "ALL GEMS!" : "GEMS " + gemsCollected.ToString() + "/" + gems.ActorCount.ToString();
+            Text.Draw(Hud, count, 104, 242, 17, "");
+        }
+
+
         Text.Draw(Hud, "T+" + (Machine.TickCount / 60).ToString(), 200, 242, 4, "");
         Text.Draw(Hud, "P palette  C colliders", 32, 6, 4, "");
+    }
+
+    // A gem the ship overlaps disappears: its actor is hidden and loses its collider.
+    private void CollectGems()
+    {
+        if (gems is null)
+        {
+            return;
+        }
+
+        touched.Clear();
+        Collision.Overlapping(shipCollider, gems.Colliders, touched);
+        for (int i = 0; i < gems.ActorCount; i++)
+        {
+            Actor gem = gems.GetActor(i);
+            if (gem.Collider is not null && touched.Contains(gem.Collider))
+            {
+                gem.Visible = false;
+                gem.Collider = null;
+                gemsCollected++;
+            }
+        }
     }
 
     private static int Horizontal()

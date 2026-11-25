@@ -8,7 +8,33 @@ public sealed class Machine
 {
     private const int ThroughputWindowSeconds = 1;
 
+    private const int MaxWarnings = 256;
+
     private readonly Queue<TimeSpan> _recentTickTimes = new();
+    private readonly List<string> _warnings = new();
+    private readonly HashSet<string> _warningSet = new(StringComparer.Ordinal);
+
+    /// <summary>Distinct warnings reported so far, in order (at most 256 are kept).</summary>
+    public IReadOnlyList<string> Warnings => _warnings;
+
+    /// <summary>Raised the first time each distinct warning is reported.</summary>
+    public event Action<string>? Warned;
+
+    /// <summary>
+    /// Reports a non-fatal problem (for example a clipped Level Layer). Repeats of the same message are
+    /// ignored, so code that warns every tick reports once.
+    /// </summary>
+    public void Warn(string message)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+        if (_warnings.Count >= MaxWarnings || !_warningSet.Add(message))
+        {
+            return;
+        }
+
+        _warnings.Add(message);
+        Warned?.Invoke(message);
+    }
 
     internal Machine()
     {

@@ -109,15 +109,39 @@ public static class ProjectBuilder
         ResourceType.Sprite => SpriteFormat.Encode(SpriteFormat.ParseJson(File.ReadAllText(resource.FullPath), resource.RelativePath)),
         ResourceType.Font => FontFormat.Encode(FontFormat.ParseJson(File.ReadAllText(resource.FullPath), resource.RelativePath)),
         ResourceType.Animation => AnimationFormat.Encode(AnimationFormat.ParseJson(File.ReadAllText(resource.FullPath), resource.RelativePath)),
+        ResourceType.Level => LevelFormat.Encode(LevelFormat.ParseJson(File.ReadAllText(resource.FullPath), resource.RelativePath)),
         _ => throw new ProjectException($"{resource.RelativePath}: {resource.Type} resources are not supported yet."),
     };
 
-    /// <summary>Sprites and fonts must name Tilemap resources that exist in the project.</summary>
+    /// <summary>Sprites, fonts and levels must name Tilemap (and Sprite) resources that exist in the project.</summary>
     private static void CheckReferences(Project project, List<CartridgeResource> resources)
     {
         var tilemaps = resources.Where(r => r.Type == ResourceType.Tilemap).Select(r => r.Name).ToHashSet(StringComparer.Ordinal);
+        var sprites = resources.Where(r => r.Type == ResourceType.Sprite).Select(r => r.Name).ToHashSet(StringComparer.Ordinal);
         for (int i = 0; i < resources.Count; i++)
         {
+            string file = project.Resources[i].RelativePath;
+            if (resources[i].Type == ResourceType.Level)
+            {
+                foreach (LevelLayer layer in LevelFormat.Decode(resources[i].Data, resources[i].Name).Layers)
+                {
+                    if (layer.Tilemap is not null && !tilemaps.Contains(layer.Tilemap))
+                    {
+                        throw new ProjectException($"{file}: layer '{layer.Name}': Tilemap resource '{layer.Tilemap}' does not exist.");
+                    }
+
+                    foreach (LevelActor actor in layer.Actors)
+                    {
+                        if (actor.Sprite is not null && !sprites.Contains(actor.Sprite))
+                        {
+                            throw new ProjectException($"{file}: actor '{actor.Id}': Sprite resource '{actor.Sprite}' does not exist.");
+                        }
+                    }
+                }
+
+                continue;
+            }
+
             string? tilemap = resources[i].Type switch
             {
                 ResourceType.Sprite => SpriteFormat.Decode(resources[i].Data, resources[i].Name).Tilemap,
@@ -127,7 +151,7 @@ public static class ProjectBuilder
 
             if (tilemap is not null && !tilemaps.Contains(tilemap))
             {
-                throw new ProjectException($"{project.Resources[i].RelativePath}: Tilemap resource '{tilemap}' does not exist.");
+                throw new ProjectException($"{file}: Tilemap resource '{tilemap}' does not exist.");
             }
         }
     }

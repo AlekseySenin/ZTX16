@@ -443,4 +443,46 @@ public class SampleCartridgeTests
         Assert.Equal(7, session.Graphics.Layers[1].GetPixel(0, 0));
         Assert.Equal(5, session.Graphics.DisplayLayers[0].OriginX);
     }
+
+    [Fact]
+    public void HelloSquareProjectWallsStopTheShipAndGemsAreCollected()
+    {
+        string root = AppContext.BaseDirectory;
+        while (!File.Exists(Path.Combine(root, "ZTX16.sln")))
+        {
+            root = Path.GetDirectoryName(root) ?? throw new InvalidOperationException("Repository root not found.");
+        }
+
+        Cartridge.CartridgeContent cartridge = ProjectBuilder.Build(Path.Combine(root, "samples", "HelloSquare"), ProjectFixtures.CoreDirectory);
+        var session = new RuntimeSession(VmProgram.Load(cartridge.Executable), 48000, new ResourceStore(cartridge.Resources));
+        session.Initialize();
+
+        // The "west" wall (x 40..55) is rasterized into the Markers layer; its bottom brick row is mortar.
+        Assert.Equal(25, session.Graphics.Layers[1].GetPixel(40, 56));
+
+        // Flying left from x = 120 stops touching the wall at x = 56: the ship's center pixel is at (64, 128).
+        session.Input.Enqueue(Platform.Input.InputEvent.KeyChange(Key.Left, true));
+        RunTicks(session, 50);
+        Assert.Equal(11, session.Graphics.Layers[2].GetPixel(64, 128));
+        Assert.Equal(0, session.Graphics.Layers[2].GetPixel(54, 128));
+
+        // Back to x = 120, then down over gem5 at (120, 20): it disappears from the Sprites layer.
+        session.Input.Enqueue(Platform.Input.InputEvent.KeyChange(Key.Left, false));
+        session.Input.Enqueue(Platform.Input.InputEvent.KeyChange(Key.Right, true));
+        RunTicks(session, 32);
+        session.Input.Enqueue(Platform.Input.InputEvent.KeyChange(Key.Right, false));
+        RunTicks(session, 1);
+        Assert.Equal(28, session.Graphics.Layers[2].GetPixel(121, 24));
+        session.Input.Enqueue(Platform.Input.InputEvent.KeyChange(Key.Down, true));
+        RunTicks(session, 70);
+        Assert.Equal(0, session.Graphics.Layers[2].GetPixel(121, 24));
+    }
+
+    private static void RunTicks(RuntimeSession session, int count)
+    {
+        for (int i = 0; i < count; i++)
+        {
+            session.RunTick(TimeSpan.Zero);
+        }
+    }
 }

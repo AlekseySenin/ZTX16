@@ -186,6 +186,7 @@ public static class ResourceTypes
         ResourceType.Sprite => ".sprite",
         ResourceType.Font => ".font",
         ResourceType.Animation => ".anim",
+        ResourceType.Level => ".level",
         _ => null,
     };
 }

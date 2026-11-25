@@ -1,0 +1,24 @@
+{
+  "layers": [
+    {
+      "name": "walls",
+      "tilemap": "art",
+      "actors": [
+        { "id": "west", "x": 40, "y": 56, "region": [16, 16, 2, 15], "collider": [0, 0, 16, 120] },
+        { "id": "north", "x": 168, "y": 40, "region": [16, 16, 5, 2], "collider": [0, 0, 40, 16] },
+        { "id": "south", "x": 144, "y": 168, "region": [16, 16, 8, 2], "collider": [0, 0, 64, 16] }
+      ]
+    },
+    {
+      "name": "gems",
+      "tilemap": "art",
+      "actors": [
+        { "id": "gem1", "x": 20, "y": 200, "tile": 5, "collider": [0, 0, 8, 8] },
+        { "id": "gem2", "x": 84, "y": 100, "tile": 5, "collider": [0, 0, 8, 8] },
+        { "id": "gem3", "x": 184, "y": 70, "tile": 5, "collider": [0, 0, 8, 8] },
+        { "id": "gem4", "x": 220, "y": 200, "tile": 5, "collider": [0, 0, 8, 8] },
+        { "id": "gem5", "x": 120, "y": 20, "tile": 5, "collider": [0, 0, 8, 8] }
+      ]
+    }
+  ]
+}

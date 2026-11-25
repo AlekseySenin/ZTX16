@@ -47,6 +47,7 @@ internal sealed unsafe class SdlHost : IDisposable
         CreateWindowAndRenderer();
 
         var session = new RuntimeSession(program, AudioSampleRate, resources);
+        session.Machine.Warned += message => Console.Error.WriteLine($"ZTX16: warning: {message}");
         _input = new SdlInputTranslator(session.Input);
         _audio = new SdlAudioOutput(session.Audio);
 

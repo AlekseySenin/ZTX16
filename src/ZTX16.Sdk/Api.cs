@@ -22,6 +22,10 @@ public static class Machine
     /// <summary>Requests suspension; the runtime may ignore it.</summary>
     [Syscall("machine.suspend")]
     public static void Suspend() => throw new NotInVmException();
+
+    /// <summary>Reports a non-fatal problem to the host (shown once per distinct message).</summary>
+    [Syscall("machine.warn")]
+    public static void Warn(string message) => throw new NotInVmException();
 }
 
 /// <summary>Graphics: layers, display layers and the palette.</summary>
@@ -300,4 +304,27 @@ public static class Animations
     /// <summary>Tile ID set by a swap.</summary>
     [Syscall("animation.swap_tile")]
     public static int SwapTile(string animation, int frame, int swap) => throw new NotInVmException();
+}
+
+/// <summary>
+/// Level resources in their flat runtime form (32-bit values and a string table). Use <c>Level.Load</c>,
+/// which decodes them into layers and actors.
+/// </summary>
+public static class Levels
+{
+    /// <summary>Number of values in the level stream.</summary>
+    [Syscall("level.value_count")]
+    public static int ValueCount(string level) => throw new NotInVmException();
+
+    /// <summary>A value of the level stream as an integer.</summary>
+    [Syscall("level.value")]
+    public static int Value(string level, int index) => throw new NotInVmException();
+
+    /// <summary>A value of the level stream reinterpreted as a float.</summary>
+    [Syscall("level.float_value")]
+    public static float FloatValue(string level, int index) => throw new NotInVmException();
+
+    /// <summary>An entry of the level's string table.</summary>
+    [Syscall("level.string")]
+    public static string String(string level, int index) => throw new NotInVmException();
 }

@@ -390,3 +390,40 @@ structs, which the VM does not support; C# 12 uses arrays.
   time.
 - `CollisionDebug.Draw(layer, collider|set, color)` draws 1-pixel outlines.
 - The Core project disables implicit usings (they made `List<T>` ambiguous with `ZTX16.Collections.List<T>`).
+
+## Level
+
+- Level resource: `levels/<name>.level` (JSON). A level has logical layers; each layer has a unique name, an
+  optional tilemap (required when it has Tile or Tile Region actors), a size in screens (`width`/`height`,
+  1..16, default 1, i.e. multiples of 256×256 pixels) and actors in drawing order:
+  ```json
+  { "layers": [ { "name": "walls", "tilemap": "art", "width": 1, "height": 1, "actors": [
+      { "id": "floor", "x": 0, "y": 0, "region": [16, 16, 32, 1], "collider": [0, 0, 256, 8] },
+      { "id": "gem", "x": 40, "y": 40, "tile": 5, "rotation": 45, "pivot": [0.5, 0.5] },
+      { "id": "hero", "x": 120, "y": 32, "sprite": "ship", "flipX": true, "scale": 2 },
+      { "id": "exit", "x": 240, "y": 0, "collider": [0, 0, 16, 256] } ] } ] }
+  ```
+  An actor has an ID unique in the level, a position, an optional transform (`flipX`, `flipY`, `scale` as a
+  number or `[x, y]`, `rotation`, `pivot`; same meaning as `Transform`), at most one visual — `tile` (ID),
+  `region` (`[column, row from bottom, width, height]` in tiles of the layer's tilemap) or `sprite` (Sprite
+  resource name) — and an optional `collider` `[x, y, width, height]` relative to its position.
+- The build checks that layer tilemaps and actor sprites exist.
+- Runtime transport: the platform serves the level as a flat stream of 32-bit values plus a string table
+  (`level.value_count/value/float_value/string`, layout in `LevelFormat`); the Core library decodes it. This
+  keeps the syscall surface small and the object model entirely in cartridge code.
+- Core: `Level.Load(name)` creates mutable runtime state; the resource never changes and loading again gives
+  a fresh copy. `Level`: `Name`, `LayerCount`, `GetLayer`, `FindLayer(name)`, `FindActor(id)`, `Colliders`.
+  `LevelLayer`: `Name`, `Index`, `Tilemap`, `Width`/`Height` (pixels), `GetActor`, `ActorCount`, `Colliders`,
+  `Rasterize(graphicsLayer, offsetX, offsetY)`. `Actor` (the Actor Runtime Reference): `Id`, `Layer`, `X`/`Y`
+  + `SetPosition` (moves its collider by the same amount), `Transform`, `Visible`, `Visual` + `SetTile`,
+  `SetTileRegion`, `SetSprite`, `ClearVisual`, `Sprite` (its own Sprite Instance, so an `AnimationPlayback`
+  can animate it), `Collider` (settable/removable; the layer and level `Colliders` sets follow), `Draw`.
+- `Rasterize` draws the visible actors in order and does not clear the target, so several logical layers
+  compose into one Graphics Layer. Drawing is clipped to the target; when the logical layer is larger than
+  the target Graphics Layer the cartridge gets a warning (`Machine.Warn`).
+- `Machine.Warn(message)` (`machine.warn`) reports non-fatal problems. The runtime keeps distinct messages
+  (`Machine.Warnings`, at most 256) and raises `Warned` once per message; the reference host prints
+  `ZTX16: warning: …` to stderr.
+- HelloSquare: the "stage" level has a `walls` layer (brick Tile Region actors with colliders, rasterized once)
+  and a `gems` layer (tile actors with colliders, rasterized every frame); touching a gem hides it and removes
+  its collider.

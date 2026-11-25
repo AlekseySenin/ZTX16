@@ -35,6 +35,7 @@ internal static class PlatformSyscalls
         Bind("machine.exit", _ => { machine.Exit(); return 0; });
         Bind("machine.suspend", _ => { machine.Suspend(); return 0; });
         Bind("machine.tick_count", _ => machine.TickCount);
+        BindWithContext("machine.warn", (c, a) => { machine.Warn(Text(c, a[0])); return 0; });
 
         // Graphics layers
         Bind("graphics.clear", a => { Layer(a[0]).Clear(); return 0; });
@@ -154,6 +155,19 @@ internal static class PlatformSyscalls
         BindWithContext("animation.swap_index", (c, a) => Frame(c, a).SpriteTiles[Swap(c, a)]);
         BindWithContext("animation.swap_tile", (c, a) => Frame(c, a).TileIds[Swap(c, a)]);
 
+        // Levels: the flat stream the Core library decodes (LevelFormat documents the layout)
+        BindWithContext("level.value_count", (c, a) => resources.Level(Name(c, a[0])).Data.Length);
+        BindWithContext("level.value", (c, a) => LevelValue(c, a));
+        BindWithContext("level.float_value", (c, a) => FromF32(BitConverter.Int32BitsToSingle(LevelValue(c, a))));
+        BindWithContext("level.string", (c, a) =>
+        {
+            string[] strings = resources.Level(Name(c, a[0])).Strings;
+            int index = ToI32(a[1]);
+            return (uint)index < (uint)strings.Length
+                ? c.NewString(strings[index])
+                : throw new ArgumentOutOfRangeException(nameof(a), index, $"The level has {strings.Length} strings.");
+        });
+
         // Text
         BindWithContext("text.draw", (c, a) =>
         {
@@ -226,6 +240,16 @@ internal static class PlatformSyscalls
             int flags = ToI32(a[first]);
             return new DrawTransform((flags & 1) != 0, (flags & 2) != 0, ToF32(a[first + 1]), ToF32(a[first + 2]), ToF32(a[first + 3]),
                 ToF32(a[first + 4]), ToF32(a[first + 5]));
+        }
+
+        // (name, index) arguments of the level value syscalls
+        int LevelValue(ISyscallContext c, ReadOnlySpan<long> a)
+        {
+            int[] data = resources.Level(Name(c, a[0])).Data;
+            int index = ToI32(a[1]);
+            return (uint)index < (uint)data.Length
+                ? data[index]
+                : throw new ArgumentOutOfRangeException(nameof(a), index, $"The level has {data.Length} values.");
         }
 
         // (name, frame, …) arguments of the animation syscalls

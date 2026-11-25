@@ -14,6 +14,7 @@ public sealed class ResourceStore
     private readonly Dictionary<string, byte[]> _tilemaps = new(StringComparer.Ordinal);
     private readonly Dictionary<string, SpriteDefinition> _sprites = new(StringComparer.Ordinal);
     private readonly Dictionary<string, AnimationDefinition> _animations = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, LevelStream> _levels = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Graphics.RuntimeFont> _fonts = new(StringComparer.Ordinal);
 
     /// <summary>Creates a store from cartridge resources.</summary>
@@ -87,6 +88,22 @@ public sealed class ResourceStore
         AnimationDefinition animation = AnimationFormat.Decode(data, name);
         _animations[name] = animation;
         return animation;
+    }
+
+    /// <summary>A Level resource in its runtime stream form.</summary>
+    /// <exception cref="ArgumentException">The level does not exist.</exception>
+    public LevelStream Level(string name)
+    {
+        if (_levels.TryGetValue(name, out LevelStream? cached))
+        {
+            return cached;
+        }
+
+        byte[] data = _data.GetValueOrDefault((ResourceType.Level, name))
+            ?? throw new ArgumentException($"Level resource '{name}' not found.");
+        LevelStream level = LevelFormat.DecodeStream(data, name);
+        _levels[name] = level;
+        return level;
     }
 
     /// <summary>A font ready for rendering. An empty name selects the built-in system font.</summary>

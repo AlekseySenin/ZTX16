@@ -43,6 +43,7 @@ public static class ProjectExtractor
                 ResourceType.Sprite => System.Text.Encoding.UTF8.GetBytes(SpriteFormat.FormatJson(SpriteFormat.Decode(resource.Data, resource.Name))),
                 ResourceType.Font => System.Text.Encoding.UTF8.GetBytes(FontFormat.FormatJson(FontFormat.Decode(resource.Data, resource.Name))),
                 ResourceType.Animation => System.Text.Encoding.UTF8.GetBytes(AnimationFormat.FormatJson(AnimationFormat.Decode(resource.Data, resource.Name))),
+                ResourceType.Level => System.Text.Encoding.UTF8.GetBytes(LevelFormat.FormatJson(LevelFormat.Decode(resource.Data, resource.Name))),
                 _ => throw new ProjectException($"{resource.Type} resources cannot be extracted yet."),
             };
 
