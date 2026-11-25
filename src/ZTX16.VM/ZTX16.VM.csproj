@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- ZTX16 executable format, verifier and interpreter. Independent of platform subsystems:
+       the machine is reached only through syscalls bound by the runtime. -->
+  <PropertyGroup>
+    <RootNamespace>ZTX16.VM</RootNamespace>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="ZTX16.Tests" />
+  </ItemGroup>
+</Project>

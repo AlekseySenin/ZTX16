@@ -1,6 +1,7 @@
 namespace ZTX16.Input;
 
 /// <summary>Mouse buttons.</summary>
+/// <remarks>Numeric values are executable ABI: append members only, never reorder.</remarks>
 public enum MouseButton
 {
     /// <summary>Left button.</summary>

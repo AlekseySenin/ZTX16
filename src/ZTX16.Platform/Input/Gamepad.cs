@@ -1,6 +1,7 @@
 namespace ZTX16.Input;
 
 /// <summary>Manufacturer-neutral gamepad buttons.</summary>
+/// <remarks>Numeric values are executable ABI: append members only, never reorder.</remarks>
 public enum GamepadButton
 {
     /// <summary>D-pad up.</summary>
@@ -47,6 +48,7 @@ public enum GamepadButton
 }
 
 /// <summary>Gamepad analog axes.</summary>
+/// <remarks>Numeric values are executable ABI: append members only, never reorder.</remarks>
 public enum GamepadAxis
 {
     /// <summary>Left stick X, -1 (left) … +1 (right).</summary>

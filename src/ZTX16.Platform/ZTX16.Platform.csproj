@@ -8,4 +8,7 @@
     <InternalsVisibleTo Include="ZTX16.Host" />
     <InternalsVisibleTo Include="ZTX16.Tests" />
   </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ZTX16.VM\ZTX16.VM.csproj" />
+  </ItemGroup>
 </Project>

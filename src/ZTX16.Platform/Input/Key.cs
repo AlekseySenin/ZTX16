@@ -4,6 +4,7 @@ namespace ZTX16.Input;
 /// Physical keyboard keys, named by their position on a US-QWERTY layout.
 /// A key identifies a physical position, not the character the host layout produces.
 /// </summary>
+/// <remarks>Numeric values are executable ABI (passed to syscalls as i32): append members only, never reorder.</remarks>
 // Member names are self-describing physical key positions; per-member XML docs add nothing.
 #pragma warning disable CS1591
 public enum Key

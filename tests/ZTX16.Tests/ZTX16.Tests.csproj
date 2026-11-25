@@ -13,5 +13,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\ZTX16.Platform\ZTX16.Platform.csproj" />
+    <ProjectReference Include="..\..\src\ZTX16.VM\ZTX16.VM.csproj" />
   </ItemGroup>
 </Project>
