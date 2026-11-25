@@ -32,9 +32,9 @@ dotnet build samples/HelloSquare
 dotnet run --project src/ZTX16.Host -- --exe samples/HelloSquare/bin/Debug/net10.0/HelloSquare.ztx
 ```
 
-HelloSquare: arrows / WASD / D-pad / left stick move a ship sprite (from an indexed PNG tilemap) with an animated engine flame; it turns to face its direction, slides along the brick walls of the "stage" level and collects its gems; text uses the built-in font; Space toggles the scrolling background, P cycles palettes, C shows colliders, Escape exits.
+HelloSquare: arrows / WASD / D-pad / left stick move a ship sprite (from an indexed PNG tilemap) with an animated engine flame; it turns to face its direction, slides along the brick walls of the "stage" level and collects its gems with sound effects (Synth, Wavetable and Sample channels); text uses the built-in font; Space toggles the scrolling background, P cycles palettes, C shows colliders, M mutes, Escape exits.
 
-Resource files in a project: palettes `*.pal` (text), tilemaps `*.png` (indexed color, up to 256×256), sprites `*.sprite`, fonts `*.font`, animations `*.anim` and levels `*.level` (JSON). See [IMPLEMENTATION_NOTES.md](Documents/IMPLEMENTATION_NOTES.md) for the formats.
+Resource files in a project: palettes `*.pal` (text), tilemaps `*.png` (indexed color, up to 256×256), sprites `*.sprite`, fonts `*.font`, animations `*.anim`, levels `*.level` and wavetables `*.wavetable` (JSON), samples `*.wav`. See [IMPLEMENTATION_NOTES.md](Documents/IMPLEMENTATION_NOTES.md) for the formats.
 
 A cartridge is one class implementing `ZTX16.ICartridge` (`Initialize`, `Tick`, `Render`, optional `Deinitialize`). The toolchain supports numeric types, `bool`, `char`, enums, classes with inheritance and virtual methods, interfaces, generics, structs, arrays, strings (including `ToString()` of numbers) and null, on a garbage-collected heap. Collections come from `ZTX16.Collections` (`List<T>`, `Dictionary<K,V>`, `HashSet<T>`, `Stack<T>`, `Queue<T>`). Structs (with value semantics) and `ref`/`out`/`in` parameters are supported. Lambdas, exceptions, boxing, `int?` and tuples are not supported yet and are reported as build errors.
 

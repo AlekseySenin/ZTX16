@@ -15,6 +15,8 @@ public sealed class ResourceStore
     private readonly Dictionary<string, SpriteDefinition> _sprites = new(StringComparer.Ordinal);
     private readonly Dictionary<string, AnimationDefinition> _animations = new(StringComparer.Ordinal);
     private readonly Dictionary<string, LevelStream> _levels = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, sbyte[]> _samples = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, sbyte[]> _wavetables = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Graphics.RuntimeFont> _fonts = new(StringComparer.Ordinal);
 
     /// <summary>Creates a store from cartridge resources.</summary>
@@ -88,6 +90,38 @@ public sealed class ResourceStore
         AnimationDefinition animation = AnimationFormat.Decode(data, name);
         _animations[name] = animation;
         return animation;
+    }
+
+    /// <summary>A Sample resource: mono 8-bit PCM at 44.1 kHz.</summary>
+    /// <exception cref="ArgumentException">The sample does not exist.</exception>
+    public sbyte[] Sample(string name)
+    {
+        if (_samples.TryGetValue(name, out sbyte[]? cached))
+        {
+            return cached;
+        }
+
+        byte[] data = _data.GetValueOrDefault((ResourceType.Sample, name))
+            ?? throw new ArgumentException($"Sample resource '{name}' not found.");
+        sbyte[] pcm = SampleFormat.Decode(data, name);
+        _samples[name] = pcm;
+        return pcm;
+    }
+
+    /// <summary>A Wavetable resource: 64 8-bit samples.</summary>
+    /// <exception cref="ArgumentException">The wavetable does not exist.</exception>
+    public sbyte[] Wavetable(string name)
+    {
+        if (_wavetables.TryGetValue(name, out sbyte[]? cached))
+        {
+            return cached;
+        }
+
+        byte[] data = _data.GetValueOrDefault((ResourceType.Wavetable, name))
+            ?? throw new ArgumentException($"Wavetable resource '{name}' not found.");
+        sbyte[] table = WavetableFormat.Decode(data, name);
+        _wavetables[name] = table;
+        return table;
     }
 
     /// <summary>A Level resource in its runtime stream form.</summary>

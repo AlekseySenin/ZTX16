@@ -2,6 +2,7 @@ using ZTX16.Abi;
 using ZTX16.Cartridge;
 using ZTX16.Platform.Runtime;
 using ZTX16.Platform.Graphics;
+using ZTX16.Platform.Audio;
 using ZTX16.Platform.Input;
 using ZTX16.VM;
 using static ZTX16.VM.VmValue;
@@ -154,6 +155,37 @@ internal static class PlatformSyscalls
         BindWithContext("animation.swap_count", (c, a) => Frame(c, a).SpriteTiles.Length);
         BindWithContext("animation.swap_index", (c, a) => Frame(c, a).SpriteTiles[Swap(c, a)]);
         BindWithContext("animation.swap_tile", (c, a) => Frame(c, a).TileIds[Swap(c, a)]);
+
+        // Audio hardware
+        AudioEngine audio = session.Audio;
+        Bind("audio.set_waveform", a => { audio.SetWaveform(ToI32(a[0]), ToI32(a[1])); return 0; });
+        Bind("audio.set_frequency", a => { audio.SetFrequency(ToI32(a[0]), ToF32(a[1])); return 0; });
+        Bind("audio.set_volume", a => { audio.SetVolume(ToI32(a[0]), ToF32(a[1])); return 0; });
+        Bind("audio.set_pan", a => { audio.SetPan(ToI32(a[0]), ToF32(a[1])); return 0; });
+        Bind("audio.set_adsr", a => { audio.SetAdsr(ToI32(a[0]), ToF32(a[1]), ToF32(a[2]), ToF32(a[3]), ToF32(a[4])); return 0; });
+        Bind("audio.note_on", a => { audio.NoteOn(ToI32(a[0])); return 0; });
+        Bind("audio.note_off", a => { audio.NoteOff(ToI32(a[0])); return 0; });
+        Bind("audio.stop", a => { audio.Stop(ToI32(a[0])); return 0; });
+        Bind("audio.set_muted", a => { audio.SetMuted(ToI32(a[0]), ToI32(a[1]) != 0); return 0; });
+        BindWithContext("audio.use_sample", (c, a) => { audio.UseSample(ToI32(a[0]), resources.Sample(Name(c, a[1]))); return 0; });
+        BindWithContext("audio.use_wavetable", (c, a) => { audio.UseWavetable(ToI32(a[0]), resources.Wavetable(Name(c, a[1]))); return 0; });
+        Bind("audio.set_sample_loop", a => { audio.SetSampleLoop(ToI32(a[0]), ToI32(a[1]) != 0, ToI32(a[2]), ToI32(a[3])); return 0; });
+        Bind("audio.set_playback_rate", a => { audio.SetPlaybackRate(ToI32(a[0]), ToF32(a[1])); return 0; });
+        Bind("audio.set_mixer_volume", a => { audio.SetMixerVolume(ToI32(a[0]), ToF32(a[1])); return 0; });
+        Bind("audio.set_master_volume", a => { audio.SetMasterVolume(ToF32(a[0])); return 0; });
+        Bind("audio.set_lfo", a => { audio.SetLfo(ToI32(a[0]), ToI32(a[1]), ToF32(a[2])); return 0; });
+        Bind("audio.route_lfo", a => { audio.RouteLfo(ToI32(a[0]), ToI32(a[1]), ToI32(a[2]), ToF32(a[3])); return 0; });
+        Bind("audio.route_lfo_to_processor", a => { audio.RouteLfoToProcessor(ToI32(a[0]), ToI32(a[1]), ToI32(a[2]), ToF32(a[3])); return 0; });
+        Bind("audio.route_adsr", a => { audio.RouteAdsr(ToI32(a[0]), ToI32(a[1]), ToF32(a[2])); return 0; });
+        Bind("audio.set_filter", a => { audio.SetFilter(ToI32(a[0]), ToI32(a[1]), ToF32(a[2]), ToF32(a[3])); return 0; });
+        Bind("audio.set_effect", a => { audio.SetEffect(ToI32(a[0]), ToI32(a[1]), ToF32(a[2]), ToF32(a[3]), ToF32(a[4])); return 0; });
+        Bind("audio.assign_processor", a => { audio.AssignProcessor(ToI32(a[0]), ToI32(a[1])); return 0; });
+        Bind("audio.channel_state", a => audio.GetChannelState(ToI32(a[0])));
+        Bind("audio.effective_pitch", a => FromF32(audio.GetEffectivePitch(ToI32(a[0]))));
+        Bind("audio.effective_volume", a => FromF32(audio.GetEffectiveVolume(ToI32(a[0]))));
+        Bind("audio.lfo_value", a => FromF32(audio.GetLfoValue(ToI32(a[0]))));
+        Bind("audio.adsr_value", a => FromF32(audio.GetAdsrValue(ToI32(a[0]))));
+        BindWithContext("audio.sample_length", (c, a) => resources.Sample(Name(c, a[0])).Length);
 
         // Levels: the flat stream the Core library decodes (LevelFormat documents the layout)
         BindWithContext("level.value_count", (c, a) => resources.Level(Name(c, a[0])).Data.Length);

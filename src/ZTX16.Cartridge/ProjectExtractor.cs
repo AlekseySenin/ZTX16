@@ -44,6 +44,8 @@ public static class ProjectExtractor
                 ResourceType.Font => System.Text.Encoding.UTF8.GetBytes(FontFormat.FormatJson(FontFormat.Decode(resource.Data, resource.Name))),
                 ResourceType.Animation => System.Text.Encoding.UTF8.GetBytes(AnimationFormat.FormatJson(AnimationFormat.Decode(resource.Data, resource.Name))),
                 ResourceType.Level => System.Text.Encoding.UTF8.GetBytes(LevelFormat.FormatJson(LevelFormat.Decode(resource.Data, resource.Name))),
+                ResourceType.Sample => SampleFormat.ToWav(SampleFormat.Decode(resource.Data, resource.Name)),
+                ResourceType.Wavetable => System.Text.Encoding.UTF8.GetBytes(WavetableFormat.FormatJson(WavetableFormat.Decode(resource.Data, resource.Name))),
                 _ => throw new ProjectException($"{resource.Type} resources cannot be extracted yet."),
             };
 

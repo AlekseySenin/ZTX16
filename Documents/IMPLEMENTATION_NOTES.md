@@ -64,8 +64,8 @@ forwarded to the session.
 ### Audio
 
 - Output: 48 kHz, stereo, 32-bit float, through an SDL3 audio stream callback on the audio thread.
-- The eight-channel hardware model is not implemented yet. The engine renders silence plus a host
-  diagnostic sine tone.
+- The eight-channel hardware model arrived in Audio-1 (below). The host diagnostic sine tone is still
+  available for checking the device path.
 
 ## VM-1 — executable format, verifier, interpreter
 
@@ -427,3 +427,48 @@ structs, which the VM does not support; C# 12 uses arrays.
 - HelloSquare: the "stage" level has a `walls` layer (brick Tile Region actors with colliders, rasterized once)
   and a `gems` layer (tile actors with colliders, rasterized every frame); touching a gem hides it and removes
   its collider.
+
+## Audio-1 — low-level audio hardware
+
+- `Audio` (SDK, `audio.*` syscalls) is the flat hardware API; enums `Waveform`, `LfoWaveform`,
+  `ModulationDestination` (Pitch, Volume), `ChannelState`, `FilterMode`, `EffectType`, `ProcessorUnit`,
+  `ProcessorParameter`.
+- **Timing and threads.** Control calls are validated at once on the runtime thread (bad channel/unit
+  indices, unsupported operations for a channel kind and non-finite numbers trap the cartridge; out-of-range
+  numbers are clamped) and queued. The Audio Update phase of the tick applies the whole batch under the
+  engine lock, so a tick's changes start together; calls made in Initialize or Render apply at the next Audio
+  Update. The audio thread renders under the same lock. Read-backs (`GetChannelState`, `GetEffectivePitch`,
+  `GetEffectiveVolume`, `GetLfoValue`, `GetAdsrValue`) return the state after the last rendered audio.
+- **Channels.** 0–5 Synth (Sine, Triangle, Saw, Reverse Saw, Square, Noise — naive, non-band-limited; noise
+  is a deterministic xorshift value changing at the channel frequency), 6–7 Sample/Wavetable. Frequency
+  0.01..20000 Hz, volume 0..1, constant-power pan, mute (the channel keeps running), finalizing mixer volume.
+  Defaults: 440 Hz, volume 1, ADSR 5 ms / 0 / 1 / 50 ms on Volume with amount 1.
+- **Voice state.** NoteOn starts or retriggers Attack from the current envelope level (oscillator phase
+  resets only from Idle; a sample always restarts); NoteOff starts Release from the current level; Stop is
+  immediate. Release ending → Idle. A sample channel without a source ignores NoteOn.
+- **Samples** play at 44.1 kHz × Playback Rate (0..64) with linear interpolation; one-shot by default
+  (`UseSample` resets looping); reaching the physical end → Idle. `SetSampleLoop(loop, start, end)` (end −1 =
+  sample end). **Wavetables**: 64 samples, linear interpolation, cyclic.
+- **Modulation**, fixed order Base → LFO1 → LFO2 → ADSR. Pitch amounts are semitones (±96, summed, then
+  `2^(s/12)`); volume amounts are factors (LFO: `v·(1 + a·lfo)`; ADSR: `v·(1 − a + a·env)` for a ≥ 0,
+  `v·(1 + a·env)` for a < 0); the result is clamped. Each channel ADSR has one destination
+  (`RouteAdsr`); each LFO→destination connection has its own amount (0 disconnects). LFOs: Triangle, Saw,
+  Reverse Saw, Square, 0.01..60 Hz, output −1..1, always running.
+- **Filters** (2): stereo TPT state-variable, LP/HP/BP, cutoff 20..20000 Hz (≤ 0.45 × output rate),
+  resonance 0..1. LFOs modulate Cutoff (semitones) and Resonance (additive).
+- **FX** (2): Chorus (Delay 1..40 ms, Depth 0..20 ms, Mix) — an LFO routed to Depth swings the delay by
+  ±Depth ms, so without one it is a static short delay; Delay (Time 1..1000 ms, Feedback 0..0.95, Mix);
+  Reverb (Freeverb-style: 4 combs + 2 allpasses per side; Size 0..1, Decay 0..1, Mix). LFO amounts on FX
+  parameters are additive in the parameter's units. Changing the type clears the buffers.
+- **Routing.** `AssignProcessor(unit, target)`: −1 none, 0..7 insert on that channel, 8 (`Audio.Global`)
+  after mixing; reassigning replaces (and clears the unit's state). Units run in the order Filter1, Filter2,
+  FX1, FX2 wherever they are assigned.
+- **Signal path.** source → ADSR/volume/pan → inserts → mixer volume → sum → global units → master volume →
+  safety limiter (instant attack, ~0.1 s release) → clamp to −1..1.
+- **Resources.** Sample: project `.wav` (PCM 8/16/24/32-bit or float, any channel count/rate; the build
+  downmixes, resamples linearly to 44.1 kHz and quantizes to signed 8-bit, max 60 s); cartridge i32 frame
+  count + bytes; extract writes an 8-bit mono WAV. Wavetable: project `.wavetable` JSON
+  `{ "samples": [64 integers −128..127] }`; cartridge 64 bytes.
+- HelloSquare: gem chime (square, two notes), wall thud (noise), engine hum while moving (wavetable + LFO
+  vibrato + insert low-pass), fanfare sample for the last gem, global reverb; M mutes (master volume 0).
+- Not yet: the high-level model (Instrument, Voice, allocator, Sequence, Song).

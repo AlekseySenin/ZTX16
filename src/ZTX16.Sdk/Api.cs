@@ -307,6 +307,144 @@ public static class Animations
 }
 
 /// <summary>
+/// Low-level audio hardware: eight fixed channels (0–5 Synth, 6–7 Sample/Wavetable), each with one ADSR and a
+/// finalizing mixer volume; two global LFOs, two Filters and two FX units; master volume and a safety limiter.
+/// </summary>
+/// <remarks>
+/// Changes made during a tick take effect together in that tick's Audio Update phase (changes made in
+/// Initialize or Render take effect in the next one). Reads return the state after the last audio rendered.
+/// </remarks>
+public static class Audio
+{
+    /// <summary>Number of physical channels.</summary>
+    public const int ChannelCount = 8;
+
+    /// <summary>First Sample/Wavetable channel.</summary>
+    public const int FirstSampleChannel = 6;
+
+    /// <summary>Processor target meaning "not assigned".</summary>
+    public const int Unassigned = -1;
+
+    /// <summary>Processor target meaning "global, after mixing".</summary>
+    public const int Global = 8;
+
+    /// <summary>Waveform of a Synth channel.</summary>
+    [Syscall("audio.set_waveform")]
+    public static void SetWaveform(int channel, Waveform waveform) => throw new NotInVmException();
+
+    /// <summary>Base frequency in Hz (0.01..20000) of a Synth or Wavetable channel.</summary>
+    [Syscall("audio.set_frequency")]
+    public static void SetFrequency(int channel, float hz) => throw new NotInVmException();
+
+    /// <summary>Base volume 0..1.</summary>
+    [Syscall("audio.set_volume")]
+    public static void SetVolume(int channel, float volume) => throw new NotInVmException();
+
+    /// <summary>Pan −1 (left) .. 1 (right).</summary>
+    [Syscall("audio.set_pan")]
+    public static void SetPan(int channel, float pan) => throw new NotInVmException();
+
+    /// <summary>ADSR: attack, decay and release in seconds (0..10), sustain level 0..1.</summary>
+    [Syscall("audio.set_adsr")]
+    public static void SetAdsr(int channel, float attack, float decay, float sustain, float release) => throw new NotInVmException();
+
+    /// <summary>Starts or retriggers the attack.</summary>
+    [Syscall("audio.note_on")]
+    public static void NoteOn(int channel) => throw new NotInVmException();
+
+    /// <summary>Begins the release.</summary>
+    [Syscall("audio.note_off")]
+    public static void NoteOff(int channel) => throw new NotInVmException();
+
+    /// <summary>Silences the channel at once, without release.</summary>
+    [Syscall("audio.stop")]
+    public static void Stop(int channel) => throw new NotInVmException();
+
+    /// <summary>Mutes or unmutes the channel's output (it keeps running).</summary>
+    [Syscall("audio.set_muted")]
+    public static void SetMuted(int channel, bool muted) => throw new NotInVmException();
+
+    /// <summary>Makes a Sample/Wavetable channel play a Sample resource (one-shot, whole sample).</summary>
+    [Syscall("audio.use_sample")]
+    public static void UseSample(int channel, string sample) => throw new NotInVmException();
+
+    /// <summary>Makes a Sample/Wavetable channel play a Wavetable resource.</summary>
+    [Syscall("audio.use_wavetable")]
+    public static void UseWavetable(int channel, string wavetable) => throw new NotInVmException();
+
+    /// <summary>Sample looping: loop or one-shot, loop start and end in sample frames (end −1 = sample end).</summary>
+    [Syscall("audio.set_sample_loop")]
+    public static void SetSampleLoop(int channel, bool loop, int start, int end) => throw new NotInVmException();
+
+    /// <summary>Sample Playback Rate multiplier (nominal 1).</summary>
+    [Syscall("audio.set_playback_rate")]
+    public static void SetPlaybackRate(int channel, float rate) => throw new NotInVmException();
+
+    /// <summary>Finalizing mixer volume 0..1 of a channel (after its insert processing).</summary>
+    [Syscall("audio.set_mixer_volume")]
+    public static void SetMixerVolume(int channel, float volume) => throw new NotInVmException();
+
+    /// <summary>Master volume 0..1 (before the safety limiter).</summary>
+    [Syscall("audio.set_master_volume")]
+    public static void SetMasterVolume(float volume) => throw new NotInVmException();
+
+    /// <summary>Waveform and frequency (0.01..60 Hz) of LFO 0 or 1.</summary>
+    [Syscall("audio.set_lfo")]
+    public static void SetLfo(int lfo, LfoWaveform waveform, float hz) => throw new NotInVmException();
+
+    /// <summary>Connects an LFO to a channel parameter with an amount (0 disconnects).</summary>
+    [Syscall("audio.route_lfo")]
+    public static void RouteLfo(int lfo, int channel, ModulationDestination destination, float amount) => throw new NotInVmException();
+
+    /// <summary>Connects an LFO to a Filter or FX parameter with an amount (0 disconnects).</summary>
+    [Syscall("audio.route_lfo_to_processor")]
+    public static void RouteLfoToProcessor(int lfo, ProcessorUnit unit, ProcessorParameter parameter, float amount) => throw new NotInVmException();
+
+    /// <summary>Assigns the channel's ADSR to its one destination (default Volume, amount 1).</summary>
+    [Syscall("audio.route_adsr")]
+    public static void RouteAdsr(int channel, ModulationDestination destination, float amount) => throw new NotInVmException();
+
+    /// <summary>Configures Filter 0 or 1: mode, cutoff in Hz (20..20000), resonance 0..1.</summary>
+    [Syscall("audio.set_filter")]
+    public static void SetFilter(int filter, FilterMode mode, float cutoff, float resonance) => throw new NotInVmException();
+
+    /// <summary>Configures FX unit 0 or 1 and its three parameters (see <see cref="EffectType"/>).</summary>
+    [Syscall("audio.set_effect")]
+    public static void SetEffect(int fx, EffectType type, float parameter1, float parameter2, float mix) => throw new NotInVmException();
+
+    /// <summary>
+    /// Assigns a processing unit: <see cref="Unassigned"/>, a channel 0..7 (insert) or <see cref="Global"/>.
+    /// Reassigning replaces the previous assignment.
+    /// </summary>
+    [Syscall("audio.assign_processor")]
+    public static void AssignProcessor(ProcessorUnit unit, int target) => throw new NotInVmException();
+
+    /// <summary>Current voice state of a channel.</summary>
+    [Syscall("audio.channel_state")]
+    public static ChannelState GetChannelState(int channel) => throw new NotInVmException();
+
+    /// <summary>Effective frequency in Hz (Synth/Wavetable) or effective Playback Rate (Sample).</summary>
+    [Syscall("audio.effective_pitch")]
+    public static float GetEffectivePitch(int channel) => throw new NotInVmException();
+
+    /// <summary>Effective volume 0..1 after modulation.</summary>
+    [Syscall("audio.effective_volume")]
+    public static float GetEffectiveVolume(int channel) => throw new NotInVmException();
+
+    /// <summary>Current output of LFO 0 or 1 (−1..1).</summary>
+    [Syscall("audio.lfo_value")]
+    public static float GetLfoValue(int lfo) => throw new NotInVmException();
+
+    /// <summary>Current ADSR output of a channel (0..1).</summary>
+    [Syscall("audio.adsr_value")]
+    public static float GetAdsrValue(int channel) => throw new NotInVmException();
+
+    /// <summary>Length of a Sample resource in sample frames (44.1 kHz).</summary>
+    [Syscall("audio.sample_length")]
+    public static int SampleLength(string sample) => throw new NotInVmException();
+}
+
+/// <summary>
 /// Level resources in their flat runtime form (32-bit values and a string table). Use <c>Level.Load</c>,
 /// which decodes them into layers and actors.
 /// </summary>

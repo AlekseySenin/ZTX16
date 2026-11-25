@@ -187,6 +187,8 @@ public static class ResourceTypes
         ResourceType.Font => ".font",
         ResourceType.Animation => ".anim",
         ResourceType.Level => ".level",
+        ResourceType.Sample => ".wav",
+        ResourceType.Wavetable => ".wavetable",
         _ => null,
     };
 }
