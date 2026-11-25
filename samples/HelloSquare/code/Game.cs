@@ -4,9 +4,10 @@ using ZTX16.Collections;
 namespace HelloSquare;
 
 /// <summary>
-/// First C# cartridge: a square moved with the arrow keys, WASD, the D-pad or the left
-/// stick, over a scrolling two-screen background, leaving a trail kept in a Queue. Space toggles the background layer,
-/// P cycles through the Palette resources of the cartridge, Escape exits.
+/// Sample cartridge: a ship sprite (from the "art" tilemap) moved with the arrow keys, WASD, the D-pad or the left
+/// stick and rotated to face its direction, over a scrolling two-screen background, leaving a trail kept in a Queue,
+/// with text in the built-in font. Space toggles the background layer, P cycles through the Palette resources of the
+/// cartridge, Escape exits.
 /// </summary>
 public sealed class Game : ICartridge
 {
@@ -15,6 +16,7 @@ public sealed class Game : ICartridge
     private const int Background = 0;
     private const int Markers = 1;
     private const int Sprites = 2;
+    private const int Hud = 3;
 
     private int x = 120;
     private int y = 120;
@@ -22,9 +24,16 @@ public sealed class Game : ICartridge
     private const int TrailLength = 12;
     private readonly Queue<int> trail = new();
     private int palette;
+    private Sprite? ship;
+    private float heading;
 
     public void Initialize()
     {
+        if (Resources.Exists(ResourceType.Sprite, "ship"))
+        {
+            ship = Sprite.Load("ship");
+        }
+
         if (Resources.Exists(ResourceType.Palette, "default"))
         {
             Graphics.UsePalette("default");
@@ -67,8 +76,17 @@ public sealed class Game : ICartridge
             Graphics.UsePalette(Resources.Name(ResourceType.Palette, palette));
         }
 
-        x = Clamp(x + Horizontal() * Speed, 0, Graphics.ScreenSize - Size);
-        y = Clamp(y + Vertical() * Speed, 0, Graphics.ScreenSize - Size);
+        int dx = Horizontal(), dy = Vertical();
+        x = Clamp(x + dx * Speed, 0, Graphics.ScreenSize - Size);
+        y = Clamp(y + dy * Speed, 0, Graphics.ScreenSize - Size);
+
+        // The ship points up at 0°; rotation is counter-clockwise.
+        if (dx != 0 || dy != 0)
+        {
+            heading = dy > 0 ? (dx < 0 ? 45f : dx > 0 ? 315f : 0f)
+                : dy < 0 ? (dx < 0 ? 135f : dx > 0 ? 225f : 180f)
+                : (dx < 0 ? 90f : 270f);
+        }
 
         scroll++;
         Graphics.SetDisplayOrigin(Background, scroll / 2, 0);
@@ -97,8 +115,19 @@ public sealed class Game : ICartridge
             age++;
         }
 
-        Graphics.FillRect(Sprites, x, y, Size, Size, 11);
-        Graphics.FillRect(Sprites, x + 4, y + 4, Size - 8, Size - 8, 22);
+        if (ship is null)
+        {
+            Graphics.FillRect(Sprites, x, y, Size, Size, 11);
+        }
+        else
+        {
+            ship.Draw(Sprites, x + Size / 2, y + Size / 2, Transform.Identity.Centered().Rotated(heading));
+        }
+
+        Graphics.Clear(Hud);
+        Text.Draw(Hud, "HELLO " + TextStyle.Color(11) + "ZTX16", 8, 242, 5, "");
+        Text.Draw(Hud, "T+" + (Machine.TickCount / 60).ToString(), 200, 242, 4, "");
+        Text.Draw(Hud, "P palette  SPACE bg", 32, 6, 4, "");
     }
 
     private static int Horizontal()

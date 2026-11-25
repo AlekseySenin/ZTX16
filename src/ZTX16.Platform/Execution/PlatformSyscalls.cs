@@ -104,6 +104,68 @@ internal static class PlatformSyscalls
                 ? c.NewString(names[index])
                 : throw new ArgumentOutOfRangeException(nameof(index), index, $"There are {names.Count} {Type(a[0])} resources.");
         });
+        // Tiles and sprites
+        BindWithContext("graphics.draw_tiles", (c, a) =>
+        {
+            DrawRegion(c, a, DrawTransform.Identity, 0, 0);
+            return 0;
+        });
+        BindWithContext("graphics.draw_tiles_transformed", (c, a) =>
+        {
+            DrawRegion(c, a, Transform(a, 8), ToI32(a[14]), ToI32(a[15]));
+            return 0;
+        });
+        BindWithContext("graphics.draw_tile_grid", (c, a) =>
+        {
+            byte[] tilemap = resources.Tilemap(Name(c, a[1]));
+            int[] tiles = c.ReadInt32Array(a[2]) ?? throw new ArgumentNullException(nameof(a), "Tile array is null.");
+            int gridWidth = ToI32(a[3]);
+            if (gridWidth < 1 || tiles.Length == 0 || tiles.Length % gridWidth != 0)
+            {
+                throw new ArgumentException($"A tile grid needs a width of at least 1 that divides the tile count ({tiles.Length}).");
+            }
+
+            int bad = Array.FindIndex(tiles, t => t is < 0 or > 1023);
+            if (bad >= 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(a), tiles[bad], $"Tile ID at index {bad} must be 0..1023.");
+            }
+
+            int gridHeight = tiles.Length / gridWidth;
+            Rasterizer.Draw(Layer(a[0]), gridWidth * 8, gridHeight * 8,
+                TileSources.Grid(tilemap, tiles, gridWidth, ToI32(a[12]), ToI32(a[13])), ToI32(a[4]), ToI32(a[5]), Transform(a, 6));
+            return 0;
+        });
+        BindWithContext("sprite.tilemap", (c, a) => c.NewString(resources.Sprite(Name(c, a[0])).Tilemap));
+        BindWithContext("sprite.width", (c, a) => resources.Sprite(Name(c, a[0])).Width);
+        BindWithContext("sprite.tile_count", (c, a) => resources.Sprite(Name(c, a[0])).Tiles.Length);
+        BindWithContext("sprite.tile", (c, a) =>
+        {
+            int[] tiles = resources.Sprite(Name(c, a[0])).Tiles;
+            int index = ToI32(a[1]);
+            return (uint)index < (uint)tiles.Length ? tiles[index] : throw new ArgumentOutOfRangeException(nameof(index), index, $"The sprite has {tiles.Length} tiles.");
+        });
+
+        // Text
+        BindWithContext("text.draw", (c, a) =>
+        {
+            TextRenderer.Draw(Layer(a[0]), Font(c, a[5]), Text(c, a[1]), ToI32(a[2]), ToI32(a[3]), ToI32(a[4]), 0, 0, wordWrap: false);
+            return 0;
+        });
+        BindWithContext("text.draw_box", (c, a) =>
+        {
+            int width = ToI32(a[4]), height = ToI32(a[5]);
+            if (width < 1 || height < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(a), "Box width must be positive and height zero or positive.");
+            }
+
+            TextRenderer.Draw(Layer(a[0]), Font(c, a[8]), Text(c, a[1]), ToI32(a[2]), ToI32(a[3]), ToI32(a[6]), width, height, ToBool(a[7]));
+            return 0;
+        });
+        BindWithContext("text.width", (c, a) => TextRenderer.Measure(Font(c, a[1]), Text(c, a[0])));
+        BindWithContext("text.line_height", (c, a) => Font(c, a[0]).LineHeight);
+
         BindWithContext("palette.use", (c, a) =>
         {
             string name = Name(c, a[0]);
@@ -136,6 +198,31 @@ internal static class PlatformSyscalls
             table.Add(name, descriptor.Signature, handler);
             bound.Add(name);
         }
+
+        void DrawRegion(ISyscallContext c, ReadOnlySpan<long> a, DrawTransform transform, int offsetX, int offsetY)
+        {
+            byte[] tilemap = resources.Tilemap(Name(c, a[1]));
+            int tileX = ToI32(a[2]), tileY = ToI32(a[3]), width = ToI32(a[4]), height = ToI32(a[5]);
+            if (tileX < 0 || tileY < 0 || width < 1 || height < 1 || tileX + width > 32 || tileY + height > 32)
+            {
+                throw new ArgumentOutOfRangeException(nameof(a), $"Tile region ({tileX}, {tileY}, {width}×{height}) must lie inside the 32×32 tilemap.");
+            }
+
+            Rasterizer.Draw(Layer(a[0]), width * 8, height * 8, TileSources.Region(tilemap, tileX, tileY, offsetX, offsetY),
+                ToI32(a[6]), ToI32(a[7]), transform);
+        }
+
+        // flags, scaleX, scaleY, rotation, pivotX, pivotY starting at argument 'first'
+        static DrawTransform Transform(ReadOnlySpan<long> a, int first)
+        {
+            int flags = ToI32(a[first]);
+            return new DrawTransform((flags & 1) != 0, (flags & 2) != 0, ToF32(a[first + 1]), ToF32(a[first + 2]), ToF32(a[first + 3]),
+                ToF32(a[first + 4]), ToF32(a[first + 5]));
+        }
+
+        RuntimeFont Font(ISyscallContext context, long slot) => resources.Font(context.ReadString(slot) ?? string.Empty);
+
+        static string Text(ISyscallContext context, long slot) => context.ReadString(slot) ?? string.Empty;
 
         static ResourceType Type(long slot) =>
             Enum.IsDefined((ResourceType)ToI32(slot))

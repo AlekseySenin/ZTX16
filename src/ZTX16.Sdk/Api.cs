@@ -81,6 +81,31 @@ public static class Graphics
     [Syscall("display.is_enabled")]
     public static bool IsDisplayEnabled(int layer) => throw new NotInVmException();
 
+    /// <summary>
+    /// Draws a rectangle of tiles from a Tilemap resource. (<paramref name="tileX"/>, <paramref name="tileY"/>)
+    /// is the region's lower-left tile (0..31, row 0 at the bottom); (<paramref name="x"/>, <paramref name="y"/>)
+    /// is where its lower-left pixel lands. ColorIndex 0 is transparent.
+    /// </summary>
+    [Syscall("graphics.draw_tiles")]
+    public static void DrawTiles(int layer, string tilemap, int tileX, int tileY, int widthInTiles, int heightInTiles, int x, int y) => throw new NotInVmException();
+
+    /// <summary>
+    /// Draws a rectangle of tiles with a transform: <paramref name="flags"/> 1 = FlipX, 2 = FlipY; scale; rotation in
+    /// degrees counter-clockwise; normalized pivot (0,0 lower-left … 1,1 upper-right) that lands on (x, y); and a
+    /// cyclic pixel offset applied inside every tile. Order: Flip → Scale → Rotation.
+    /// </summary>
+    [Syscall("graphics.draw_tiles_transformed")]
+    public static void DrawTilesTransformed(int layer, string tilemap, int tileX, int tileY, int widthInTiles, int heightInTiles, int x, int y,
+        int flags, float scaleX, float scaleY, float rotation, float pivotX, float pivotY, int offsetX, int offsetY) => throw new NotInVmException();
+
+    /// <summary>
+    /// Draws a grid of arbitrary tile IDs (row-major, bottom row first, <paramref name="gridWidth"/> tiles per row) with a
+    /// transform, as one image. Used by <c>Sprite</c>.
+    /// </summary>
+    [Syscall("graphics.draw_tile_grid")]
+    public static void DrawTileGrid(int layer, string tilemap, int[] tiles, int gridWidth, int x, int y,
+        int flags, float scaleX, float scaleY, float rotation, float pivotX, float pivotY, int offsetX, int offsetY) => throw new NotInVmException();
+
     /// <summary>Replaces the whole palette with the Palette resource <paramref name="name"/>; stops the cartridge if it does not exist.</summary>
     [Syscall("palette.use")]
     public static void UsePalette(string name) => throw new NotInVmException();
@@ -203,4 +228,52 @@ public static class Resources
     /// <summary>Name of resource <paramref name="index"/> (0..Count-1) of <paramref name="type"/>, in name order.</summary>
     [Syscall("resources.name")]
     public static string Name(ResourceType type, int index) => throw new NotInVmException();
+}
+
+/// <summary>Sprite resources: tile grids defined in the project. Use the <c>Sprite</c> class to draw and modify them.</summary>
+public static class Sprites
+{
+    /// <summary>Name of the Tilemap resource the sprite's tiles come from.</summary>
+    [Syscall("sprite.tilemap")]
+    public static string Tilemap(string sprite) => throw new NotInVmException();
+
+    /// <summary>Grid width in tiles.</summary>
+    [Syscall("sprite.width")]
+    public static int Width(string sprite) => throw new NotInVmException();
+
+    /// <summary>Number of tiles in the grid.</summary>
+    [Syscall("sprite.tile_count")]
+    public static int TileCount(string sprite) => throw new NotInVmException();
+
+    /// <summary>Tile ID at <paramref name="index"/> (row-major, bottom row first).</summary>
+    [Syscall("sprite.tile")]
+    public static int Tile(string sprite, int index) => throw new NotInVmException();
+}
+
+/// <summary>
+/// Bitmap text. A <c>font</c> name of "" selects the built-in 8×8 system font. The text stream
+/// understands '\n' (new line) and '\u0001' followed by a character whose code is a ColorIndex (set color).
+/// The position is the lower-left corner of the first line; further lines go down.
+/// </summary>
+public static class Text
+{
+    /// <summary>Draws text without wrapping.</summary>
+    [Syscall("text.draw")]
+    public static void Draw(int layer, string text, int x, int y, int color, string font) => throw new NotInVmException();
+
+    /// <summary>
+    /// Draws text inside a box whose lower-left corner is (x, y). Lines are limited to <paramref name="width"/> pixels
+    /// (whole words kept together when <paramref name="wordWrap"/>); the first line sits at the top of the box and
+    /// drawing stops at the bottom edge. A <paramref name="height"/> of 0 means no bottom edge (lines then start at y).
+    /// </summary>
+    [Syscall("text.draw_box")]
+    public static void DrawBox(int layer, string text, int x, int y, int width, int height, int color, bool wordWrap, string font) => throw new NotInVmException();
+
+    /// <summary>Width in pixels of the widest line of the text.</summary>
+    [Syscall("text.width")]
+    public static int Width(string text, string font) => throw new NotInVmException();
+
+    /// <summary>Line height of the font in pixels.</summary>
+    [Syscall("text.line_height")]
+    public static int LineHeight(string font) => throw new NotInVmException();
 }

@@ -901,6 +901,19 @@ public sealed class VmInstance : ISyscallContext
     }
 
     /// <inheritdoc />
+    int[]? ISyscallContext.ReadInt32Array(long handle)
+    {
+        if (handle == 0)
+        {
+            return null;
+        }
+
+        return _heap.Get(handle) is ArrayObject { Kind: VmArrayKind.Bits32 } array
+            ? ((int[])array.Data).ToArray()
+            : throw new ArgumentException("Argument is not an int[].");
+    }
+
+    /// <inheritdoc />
     long ISyscallContext.NewString(string value)
     {
         ArgumentNullException.ThrowIfNull(value);

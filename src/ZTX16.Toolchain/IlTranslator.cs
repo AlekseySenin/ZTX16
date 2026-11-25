@@ -704,6 +704,22 @@ internal sealed class TranslationContext
                 return (VmSignature.Of(R, R, R, R), f => f.Emit(OpCode.StringConcat).Emit(OpCode.StringConcat));
             case ("System.String", "Concat", 4) when signature.ParameterTypes.All(p => p is StringClrType):
                 return (VmSignature.Of(R, R, R, R, R), f => f.Emit(OpCode.StringConcat).Emit(OpCode.StringConcat).Emit(OpCode.StringConcat));
+            // The compiler concatenates characters through ReadOnlySpan<char>, which the toolchain models as a string.
+            case ("System.String", "op_Implicit", 1) when signature.ReturnType is CharSpanClrType:
+                return (VmSignature.Of(R, R), _ => { });
+            case ("System.String", "Concat", >= 2 and <= 4) when signature.ParameterTypes.All(p => p is CharSpanClrType):
+                {
+                    int parts = signature.ParameterTypes.Length;
+                    var types = Enumerable.Repeat(R, parts).ToArray();
+                    return (new VmSignature(types, R), f =>
+                    {
+                        for (int i = 1; i < parts; i++)
+                        {
+                            f.Emit(OpCode.StringConcat);
+                        }
+                    });
+                }
+
             case ("System.String", "Concat", 1) when signature.ParameterTypes[0] is ArrayClrType { Element: StringClrType }:
                 return (VmSignature.Of(R, R), f => f.Emit(OpCode.StringConcatArray));
             case ("System.String", "IsNullOrEmpty", 1):
@@ -775,6 +791,16 @@ internal sealed class TranslationContext
     /// <summary>Resolves a constructor used by <c>newobj</c>.</summary>
     public (VmSignature Constructor, Action<FunctionBuilder> Emit) ResolveNew(EntityHandle target, GenericContext context, string where)
     {
+        // new ReadOnlySpan<char>(ref c): a one-character string (see CharSpanClrType).
+        if (target.Kind == HandleKind.MemberReference
+            && Reader.GetMemberReference((MemberReferenceHandle)target) is var spanCtor
+            && ResolveTypeToken(spanCtor.Parent, context) is CharSpanClrType
+            && spanCtor.DecodeMethodSignature(TypeProvider, null).ParameterTypes is [ByRefClrType]) // .ctor(ref T) with T = char
+        {
+            return (VmSignature.Of(null, VmType.Ref, VmType.Ref),
+                f => f.Emit(OpCode.LoadIndirect, (int)VmElementAccess.U16).Emit(OpCode.ToText, (int)VmFormatKind.Char));
+        }
+
         if (target.Kind == HandleKind.MemberReference
             && ResolveTypeToken(Reader.GetMemberReference((MemberReferenceHandle)target).Parent, context) is not ClassClrType)
         {

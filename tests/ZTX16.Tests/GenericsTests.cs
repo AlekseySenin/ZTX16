@@ -168,6 +168,15 @@ public class GenericsSemanticsTests
                 return h;
             }
 
+            public static int CharConcat(int n)
+            {
+                char c = (char)('a' + n % 26);
+                string s = "x" + c + c.ToString() + "y" + c;
+                int h = s.Length;
+                foreach (char ch in s) h = h * 31 + ch;
+                return h;
+            }
+
             public static int StacksAndQueues(int n)
             {
                 var stack = new Stack<int>();
@@ -191,7 +200,7 @@ public class GenericsSemanticsTests
             {
                 sink = Fns.Boxes(1) + Fns.Pairs(1) + Fns.GenericMethods(1) + Fns.GenericInterfaces(1)
                     + Fns.StaticPerInstantiation(1) + Fns.Lists(1) + Fns.ListOfObjects(2) + Fns.Dictionaries(5)
-                    + Fns.DictionaryOfObjects(1) + Fns.Sets(1) + Fns.StacksAndQueues(3) + Fns.Texts(1);
+                    + Fns.DictionaryOfObjects(1) + Fns.Sets(1) + Fns.StacksAndQueues(3) + Fns.Texts(1) + Fns.CharConcat(1);
             }
 
             public void Tick() { }
@@ -205,7 +214,7 @@ public class GenericsSemanticsTests
         { "GenericInterfaces", 10 }, { "StaticPerInstantiation", 4 },
         { "Lists", 10 }, { "Lists", 100 }, { "ListOfObjects", 9 },
         { "Dictionaries", 50 }, { "Dictionaries", 500 }, { "DictionaryOfObjects", 1 },
-        { "Sets", 30 }, { "StacksAndQueues", 12 }, { "Texts", 7 }, { "Texts", -123 },
+        { "Sets", 30 }, { "StacksAndQueues", 12 }, { "Texts", 7 }, { "Texts", -123 }, { "CharConcat", 3 },
     };
 
     [Theory]

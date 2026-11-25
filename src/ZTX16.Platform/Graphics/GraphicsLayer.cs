@@ -119,6 +119,9 @@ public sealed class GraphicsLayer
     /// <summary>Read-only view of the raw pixel rows for the compositor.</summary>
     internal ReadOnlySpan<byte> Pixels => _pixels;
 
+    /// <summary>Writable view of the raw pixel rows for rasterizers (callers clip).</summary>
+    internal Span<byte> WritablePixels => _pixels;
+
     private void ValidatePosition(int x, int y)
     {
         if ((uint)x >= (uint)Width)

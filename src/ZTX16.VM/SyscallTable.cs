@@ -19,6 +19,10 @@ public interface ISyscallContext
 
     /// <summary>Allocates a string on the VM heap and returns its reference, for use as a result.</summary>
     long NewString(string value);
+
+    /// <summary>Copies an <c>int[]</c> argument (null for a null reference).</summary>
+    /// <exception cref="ArgumentException">The reference is not an array of 32-bit integers.</exception>
+    int[]? ReadInt32Array(long handle);
 }
 
 /// <summary>Thrown when a module imports a syscall the runtime does not provide.</summary>

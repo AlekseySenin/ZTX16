@@ -301,3 +301,59 @@ structs, which the VM does not support; C# 12 uses arrays.
   `Graphics.UsePalette(name)` (a missing palette stops the cartridge).
 - Syscalls receive an `ISyscallContext` to read string arguments and return strings; `string` is part of
   the syscall ABI (as a reference).
+
+## Graphics-2 — tiles, sprites, fonts and text
+
+### Resources
+
+- **Tilemap** (`tilemaps/*.png`): an **indexed-color PNG** (bit depth 1/2/4/8, no interlacing) up to
+  256×256 with sides that are multiples of 8; the palette index of each pixel is its ColorIndex (0 =
+  transparent, at most 31). The image sits at the lower-left of the tilemap, so **tile 0 is the image's
+  lower-left tile** and `id = row * 32 + column` with row 0 at the bottom (the ZTX16 origin rule). The cartridge
+  stores 65 536 ColorIndex bytes (bottom row first) plus the PNG's first 32 palette colors, so extraction
+  writes back a PNG with the artist's colors. The toolchain has its own PNG codec (no dependency).
+- **Sprite** (`sprites/*.sprite`): JSON `{ "tilemap": …, "width": …, "tiles": [ … ] }`, tile IDs listed
+  **bottom row first**, grids up to 32×32 tiles.
+- **Font** (`fonts/*.font`): JSON with `tilemap`, `glyphWidth`/`glyphHeight` (tiles, 1..4), `lineHeight`
+  and default `advance` (pixels), `ranges` (`first`, `last`, `tile`) and per-character `characters`
+  overrides (`char` or `code`, `tile`, `advance`). A range lays glyphs out left to right from its start tile
+  and wraps at the right edge to the glyph row **below** — the way font sheets are drawn. A glyph is the
+  region that starts at its tile (lower-left) and extends right and up.
+- Sprites and fonts must reference an existing Tilemap resource (build error otherwise).
+- **Built-in system font:** 8×8 monospaced glyphs for ASCII 32..126 (data from the public-domain
+  `font8x8_basic`), line height 9, selected with the font name `""`. It needs no resources, so text works
+  in every cartridge (and later in the Console and editors).
+
+### Drawing
+
+- `Graphics.DrawTiles` (fast path), `Graphics.DrawTilesTransformed` and `Graphics.DrawTileGrid` (arbitrary
+  tile IDs drawn as one image; used by `Sprite`). Transform order is Flip → Scale → Rotation, around a
+  normalized pivot that lands on the draw position; rotation is counter-clockwise; PixelOffset shifts
+  cyclically inside every tile.
+- The rasterizer maps each destination pixel center back into the source (nearest neighbour). Scale 1 with a
+  rotation that is a multiple of 360° uses an exact copy path; 90°/180°/270° use exact sines and cosines, so
+  right-angle rotations are pixel-perfect. Other angles use `MathF` and may differ in the last pixel across
+  host math libraries.
+- Core library (`ZTX16` namespace, compiled into cartridges): `struct Transform` (with `Flipped`, `Scaled`,
+  `Rotated`, `WithPivot`, `Centered`), `Tiles.Draw`, `class Sprite` (Sprite Instance loaded from a resource;
+  tiles changeable at runtime), `TextStyle.Color(index)`.
+
+### Text
+
+- `Text.Draw`, `Text.DrawBox` (width limit, optional word wrap keeping whole words and splitting longer
+  ones, height limit), `Text.Width`, `Text.LineHeight`.
+- The position is the **lower-left corner of the first line**; further lines go down. In a box with a height,
+  the first line sits at the top and drawing stops at the first line that would cross the bottom edge.
+- Text stream commands: New Line = `'\n'`; Set Color = `'\u0001'` followed by one character whose code is
+  the ColorIndex (`TextStyle.Color` builds it). Tab is an ordinary character.
+- **Character set (provisional):** codes 0..127 are ASCII; 128..255 currently follow Latin-1 until the
+  platform-defined extended set (Cyrillic, Katakana, …) is allocated; characters above U+00FF render as `?`.
+
+### Toolchain
+
+- The C# compiler concatenates strings with characters through `ReadOnlySpan<char>` (`"a" + c`, also
+  `"a" + c.ToString()` in Release builds). The toolchain models `ReadOnlySpan<char>` as a string: the
+  implicit conversion is a no-op, `new ReadOnlySpan<char>(ref c)` becomes a one-character string, and
+  `string.Concat` over spans becomes string concatenation.
+- Syscalls can read `int[]` arguments (`ISyscallContext.ReadInt32Array`); arrays are part of the ABI as
+  references.

@@ -46,6 +46,7 @@ public static class ProjectBuilder
         var resources = project.Resources
             .Select(r => new CartridgeResource(r.Type, r.Name, EncodeResource(r)))
             .ToList();
+        CheckReferences(project, resources);
         var sources = project.Sources
             .Select(s => new CartridgeSource(s.RelativePath, File.ReadAllBytes(s.FullPath)))
             .ToList();
@@ -104,6 +105,29 @@ public static class ProjectBuilder
     private static byte[] EncodeResource(ProjectResource resource) => resource.Type switch
     {
         ResourceType.Palette => PaletteFormat.Encode(PaletteFormat.ParseText(File.ReadAllText(resource.FullPath), resource.RelativePath)),
+        ResourceType.Tilemap => TilemapFormat.FromPng(File.ReadAllBytes(resource.FullPath), resource.RelativePath),
+        ResourceType.Sprite => SpriteFormat.Encode(SpriteFormat.ParseJson(File.ReadAllText(resource.FullPath), resource.RelativePath)),
+        ResourceType.Font => FontFormat.Encode(FontFormat.ParseJson(File.ReadAllText(resource.FullPath), resource.RelativePath)),
         _ => throw new ProjectException($"{resource.RelativePath}: {resource.Type} resources are not supported yet."),
     };
+
+    /// <summary>Sprites and fonts must name Tilemap resources that exist in the project.</summary>
+    private static void CheckReferences(Project project, List<CartridgeResource> resources)
+    {
+        var tilemaps = resources.Where(r => r.Type == ResourceType.Tilemap).Select(r => r.Name).ToHashSet(StringComparer.Ordinal);
+        for (int i = 0; i < resources.Count; i++)
+        {
+            string? tilemap = resources[i].Type switch
+            {
+                ResourceType.Sprite => SpriteFormat.Decode(resources[i].Data, resources[i].Name).Tilemap,
+                ResourceType.Font => FontFormat.Decode(resources[i].Data, resources[i].Name).Tilemap,
+                _ => null,
+            };
+
+            if (tilemap is not null && !tilemaps.Contains(tilemap))
+            {
+                throw new ProjectException($"{project.Resources[i].RelativePath}: Tilemap resource '{tilemap}' does not exist.");
+            }
+        }
+    }
 }

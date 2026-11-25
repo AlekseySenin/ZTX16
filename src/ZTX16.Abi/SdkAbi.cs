@@ -42,6 +42,11 @@ public static class SdkAbi
             return null;
         }
 
+        if (type.IsArray)
+        {
+            return VmType.Ref;
+        }
+
         if (type.IsEnum)
         {
             type = Enum.GetUnderlyingType(type);

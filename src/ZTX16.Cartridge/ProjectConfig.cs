@@ -182,6 +182,9 @@ public static class ResourceTypes
     public static string? Extension(ResourceType type) => type switch
     {
         ResourceType.Palette => ".pal",
+        ResourceType.Tilemap => ".png",
+        ResourceType.Sprite => ".sprite",
+        ResourceType.Font => ".font",
         _ => null,
     };
 }

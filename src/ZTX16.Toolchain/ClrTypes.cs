@@ -63,6 +63,12 @@ internal sealed record StringClrType() : ClrType("string");
 /// </summary>
 internal sealed record ByRefClrType(ClrType Element) : ClrType($"ref {Element}");
 
+/// <summary>
+/// <c>System.ReadOnlySpan&lt;char&gt;</c>, which the C# compiler uses to concatenate strings with characters.
+/// The toolchain represents it as a string.
+/// </summary>
+internal sealed record CharSpanClrType() : ClrType("ReadOnlySpan<char>");
+
 /// <summary><c>System.Object</c>.</summary>
 internal sealed record ObjectClrType() : ClrType("object");
 
@@ -92,7 +98,7 @@ internal static class ClrTypeMapping
             case EnumClrType e:
                 code = e.Underlying;
                 break;
-            case ClassClrType or SdkInterfaceClrType or StringClrType or ObjectClrType or ByRefClrType:
+            case ClassClrType or SdkInterfaceClrType or StringClrType or ObjectClrType or ByRefClrType or CharSpanClrType:
                 return new(VmType.Ref, null);
             case ArrayClrType array:
                 ElementAccess(array.Element, context); // validates the element type
@@ -319,6 +325,7 @@ internal sealed class ClrTypeProvider : ISignatureTypeProvider<ClrType, GenericC
         return genericType switch
         {
             ClassClrType c => c.Instantiate(typeArguments),
+            UnsupportedClrType { Description: "System.ReadOnlySpan`1" } when typeArguments is [PrimitiveClrType { Code: PrimitiveTypeCode.Char }] => new CharSpanClrType(),
             UnsupportedClrType u when u.Description.StartsWith("System.Collections.Generic.", StringComparison.Ordinal) =>
                 new UnsupportedClrType(u.Description, $"use the ZTX16.Collections equivalent instead of {u.Description}"),
             UnsupportedClrType u => new UnsupportedClrType($"{u.Description}<{string.Join(",", typeArguments)}>", u.Reason),
