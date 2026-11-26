@@ -515,3 +515,18 @@ structs, which the VM does not support; C# 12 uses arrays.
 - HelloSquare: effects are voices (chime and thud share channels 0–1, hum on 7, fanfare on 6); a looping
   three-part song (bass, arpeggio through Filter 2 with an LFO 2 wah, lead with LFO 2 vibrato) plays on
   channels 2–4; M toggles it.
+
+## Host launcher — ZTX16.exe
+
+- The host assembly is now `ZTX16` (`ZTX16.exe`), a Windows GUI executable (`WinExe`) with an icon (the
+  HelloSquare ship). Started from a terminal it attaches to that console (`AttachConsole`), so messages still
+  appear there; otherwise errors go to an SDL message box (`HostShell.Error`).
+- Arguments: a bare path is the cartridge (`ZTX16.exe game.ztx`; also drag-and-drop and "Open with");
+  `--exe <file>` still works; `--diagnostic` runs the diagnostic program, which used to be the default.
+  **Without a cartridge the host shows the system file dialog** (`SDL_ShowOpenFileDialog`, filter
+  `*.ztx;*.ztxe`, starting in `cartridges/` next to the executable); cancelling exits with code 0.
+- The window title is `<cartridge name> — ZTX16` (from the cartridge config).
+- `tools/publish.ps1` publishes a single-file, self-contained, compressed `ZTX16.exe` (~39 MB; the .NET
+  runtime and SDL3 inside, SDL3 is extracted on first start) to `dist/ZTX16/` and builds the samples into
+  `dist/ZTX16/cartridges/`. `dist/` is ignored by git. Not trimmed (SDL3-CS and the VM use reflection-free
+  code, but trimming is untested) and not code-signed.

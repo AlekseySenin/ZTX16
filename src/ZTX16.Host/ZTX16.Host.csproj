@@ -1,10 +1,21 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- Reference host: SDL3 window/input/audio, presentation through SDL's OpenGL renderer. -->
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
+    <!-- A GUI executable: no console window when double-clicked; it attaches to the terminal it was started from. -->
+    <OutputType>WinExe</OutputType>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <AssemblyName>ZTX16.Host</AssemblyName>
+    <AssemblyName>ZTX16</AssemblyName>
     <RootNamespace>ZTX16.Host</RootNamespace>
+    <ApplicationIcon>ztx16.ico</ApplicationIcon>
+    <Product>ZTX16</Product>
+    <Description>ZTX16 fantasy computer</Description>
+  </PropertyGroup>
+  <!-- Single-file publishing (tools/publish.ps1): one ZTX16.exe with the .NET runtime and SDL3 inside. -->
+  <PropertyGroup Condition="'$(PublishSingleFile)' == 'true'">
+    <SelfContained>true</SelfContained>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <DebugType>none</DebugType>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="ppy.SDL3-CS" Version="2026.1002.1" />

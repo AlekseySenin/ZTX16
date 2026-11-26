@@ -5,7 +5,7 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
   <ItemGroup>
-    <InternalsVisibleTo Include="ZTX16.Host" />
+    <InternalsVisibleTo Include="ZTX16" />
     <InternalsVisibleTo Include="ZTX16.Tests" />
   </ItemGroup>
   <ItemGroup>

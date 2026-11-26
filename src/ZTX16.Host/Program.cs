@@ -6,29 +6,46 @@ using ZTX16.Platform.Runtime;
 using ZTX16.VM;
 using ZTX16.Cartridge;
 
+// ZTX16.exe is a GUI program: double-clicking it opens no console. Started from a terminal it attaches to
+// that terminal; otherwise errors are shown in message boxes.
+HostShell.AttachConsole();
+
 HostOptions options;
 IRuntimeProgram program;
 ResourceStore? resources = null;
+string title = "ZTX16";
 try
 {
     options = HostOptions.Parse(args);
+    if (options.Program == HostProgram.Picker)
+    {
+        // Started without a cartridge (for example by double-clicking the executable): ask for one.
+        string? picked = HostShell.PickCartridge();
+        if (picked is null)
+        {
+            return 0;
+        }
+
+        options = options with { Program = HostProgram.Executable, ExecutablePath = picked };
+    }
+
     program = options.Program switch
     {
         HostProgram.VmDemo => VmProgram.Load(VmDemoCartridge.BuildExecutable()),
         HostProgram.Executable when options.ExecutablePath!.EndsWith(CartridgeFile.Extension, StringComparison.OrdinalIgnoreCase)
-            => LoadCartridge(options.ExecutablePath, out resources),
+            => LoadCartridge(options.ExecutablePath, out resources, out title),
         HostProgram.Executable => VmProgram.Load(File.ReadAllBytes(options.ExecutablePath)),
         _ => new DiagnosticProgram(),
     };
 }
-catch (Exception e) when (e is ArgumentException or IOException or ExecutableFormatException or VerificationException
-    or CartridgeFormatException or ProjectException)
+catch (Exception e) when (e is ArgumentException or IOException or UnauthorizedAccessException or ExecutableFormatException
+    or VerificationException or CartridgeFormatException or ProjectException or LinkException)
 {
-    Console.Error.WriteLine($"ZTX16: {e.Message}");
+    HostShell.Error(e.Message);
     return 2;
 }
 
-using var host = new SdlHost(options);
+using var host = new SdlHost(options, title);
 try
 {
     return host.Run(program, resources);
@@ -36,15 +53,22 @@ try
 catch (Exception e) when (e is VmTrapException or LinkException)
 {
     // Unhandled cartridge failure: the session ends without Deinitialize.
-    Console.Error.WriteLine($"ZTX16: cartridge failed: {e.Message}");
+    HostShell.Error($"The cartridge failed: {e.Message}");
     return 1;
+}
+catch (InvalidOperationException e)
+{
+    HostShell.Error(e.Message);
+    return 3;
 }
 
 // Loads a packed cartridge: the executable runs in the VM, the resources go to the session.
-static IRuntimeProgram LoadCartridge(string path, out ResourceStore? resources)
+static IRuntimeProgram LoadCartridge(string path, out ResourceStore? resources, out string title)
 {
     CartridgeContent cartridge = CartridgeFile.Read(File.ReadAllBytes(path));
     resources = new ResourceStore(cartridge.Resources);
+    string name = cartridge.Config.Name;
+    title = string.IsNullOrWhiteSpace(name) ? "ZTX16" : $"{name} — ZTX16";
     return VmProgram.Load(cartridge.Executable);
 }
 
@@ -61,6 +85,9 @@ namespace ZTX16.Host
 
         /// <summary>A ZTX16 executable file from disk.</summary>
         Executable,
+
+        /// <summary>No program given: ask for a cartridge with the system file dialog.</summary>
+        Picker,
     }
 
     /// <summary>Command-line options of the reference host.</summary>
@@ -69,13 +96,14 @@ namespace ZTX16.Host
         public const int MinScale = 1;
         public const int MaxScale = 8;
 
-        private const string Usage = "Usage: [--scale N] [--fullscreen] [--vm-demo | --exe <file.ztx | file.ztxe>]";
+        private const string Usage =
+            "Usage: ZTX16 [--scale N] [--fullscreen] [<file.ztx | file.ztxe> | --exe <file> | --vm-demo | --diagnostic]";
 
         public static HostOptions Parse(string[] args)
         {
             int scale = 3;
             bool fullscreen = false;
-            HostProgram program = HostProgram.Diagnostic;
+            HostProgram program = HostProgram.Picker;
             string? executable = null;
 
             for (int i = 0; i < args.Length; i++)
@@ -95,9 +123,17 @@ namespace ZTX16.Host
                     case "--vm-demo":
                         program = HostProgram.VmDemo;
                         break;
+                    case "--diagnostic":
+                        program = HostProgram.Diagnostic;
+                        break;
                     case "--exe" when i + 1 < args.Length:
                         program = HostProgram.Executable;
                         executable = args[++i];
+                        break;
+                    case string path when !path.StartsWith("--", StringComparison.Ordinal) && executable is null:
+                        // A bare path: "ZTX16 game.ztx", a file dropped on the executable, or "Open with".
+                        program = HostProgram.Executable;
+                        executable = path;
                         break;
                     default:
                         throw new ArgumentException($"Unknown argument '{args[i]}'. {Usage}");

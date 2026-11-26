@@ -34,11 +34,13 @@ internal sealed unsafe class SdlHost : IDisposable
     private int _scale;
     private bool _fullscreen;
     private bool _minimized;
+    private readonly string _title;
 
-    public SdlHost(HostOptions options)
+    public SdlHost(HostOptions options, string title = "ZTX16")
     {
         _scale = options.Scale;
         _fullscreen = options.Fullscreen;
+        _title = title;
     }
 
     /// <summary>Runs <paramref name="program"/> until it exits or the window closes. Returns the process exit code.</summary>
@@ -117,7 +119,7 @@ internal sealed unsafe class SdlHost : IDisposable
             throw new InvalidOperationException($"SDL_Init failed: {SDL_GetError()}");
         }
 
-        _window = SDL_CreateWindow("ZTX16", Width * _scale, Height * _scale, SDL_WindowFlags.SDL_WINDOW_RESIZABLE);
+        _window = SDL_CreateWindow(_title, Width * _scale, Height * _scale, SDL_WindowFlags.SDL_WINDOW_RESIZABLE);
         if (_window == null)
         {
             throw new InvalidOperationException($"SDL_CreateWindow failed: {SDL_GetError()}");

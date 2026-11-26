@@ -38,13 +38,27 @@ Resource files in a project: palettes `*.pal` (text), tilemaps `*.png` (indexed 
 
 A cartridge is one class implementing `ZTX16.ICartridge` (`Initialize`, `Tick`, `Render`, optional `Deinitialize`). The toolchain supports numeric types, `bool`, `char`, enums, classes with inheritance and virtual methods, interfaces, generics, structs, arrays, strings (including `ToString()` of numbers) and null, on a garbage-collected heap. Collections come from `ZTX16.Collections` (`List<T>`, `Dictionary<K,V>`, `HashSet<T>`, `Stack<T>`, `Queue<T>`). Structs (with value semantics) and `ref`/`out`/`in` parameters are supported. Lambdas, exceptions, boxing, `int?` and tuples are not supported yet and are reported as build errors.
 
+## ZTX16.exe — run cartridges without a terminal
+
+```
+powershell -ExecutionPolicy Bypass -File tools/publish.ps1
+```
+
+This produces `dist/ZTX16/ZTX16.exe` — one self-contained file (the .NET runtime and SDL3 inside, nothing to install) — and `dist/ZTX16/cartridges/` with the sample cartridges. Copy the folder anywhere. Then:
+
+- **double-click `ZTX16.exe`**: a file dialog asks for a cartridge (it opens in `cartridges/`);
+- **drag a `.ztx` onto `ZTX16.exe`**, or use **Open with → ZTX16.exe** on a `.ztx` file (tick "always" to make `.ztx` files open with a double-click);
+- from a terminal: `ZTX16.exe game.ztx [--scale N] [--fullscreen]` — messages appear in that terminal.
+
+The window title shows the cartridge name. Without a terminal, errors (a broken cartridge, a cartridge failure) are shown in a message box. The executable is not code-signed, so Windows SmartScreen or Smart App Control may ask before the first start.
+
 ## Host options
 
 ```
-dotnet run --project src/ZTX16.Host -- [--scale 1..8] [--fullscreen] [--exe <file.ztx | file.ztxe> | --vm-demo]
+dotnet run --project src/ZTX16.Host -- [--scale 1..8] [--fullscreen] [<file.ztx | file.ztxe> | --exe <file> | --vm-demo | --diagnostic]
 ```
 
-Without `--exe` the host runs its built-in diagnostic program; `--vm-demo` runs a hand-assembled bytecode demo.
+Without a cartridge the host asks for one with the system file dialog; `--diagnostic` runs its built-in diagnostic program and `--vm-demo` a hand-assembled bytecode demo.
 
 | Key | Action |
 |---|---|
@@ -62,6 +76,7 @@ Diagnostic program: arrows / WASD / D-pad / left stick move the square (its heig
 - `src/ZTX16.Core` — core library (`ZTX16.Collections`), compiled into every cartridge as source.
 - `src/ZTX16.Cartridge` — Project Config, project discovery, resource formats, cartridge file, extraction.
 - `src/ZTX16.Toolchain` — `ztx16c` (new / build / extract / translate), IL → ZTX16 translator, cartridge build targets.
-- `src/ZTX16.Host` — SDL3 reference host.
+- `src/ZTX16.Host` — SDL3 reference host (`ZTX16.exe`).
+- `tools/publish.ps1` — publishes the single-file `ZTX16.exe` with the sample cartridges to `dist/`.
 - `samples/` — example cartridges.
 - `tests/ZTX16.Tests` — unit, VM, toolchain and differential tests.
