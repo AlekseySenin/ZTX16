@@ -100,3 +100,18 @@ public class CodeIntelligenceTests
         Assert.Empty(CodeIntelligence.Complete(dir.Path, "code/Game.cs", text, line, column, ProjectFixtures.CoreDirectory).Items);
     }
 }
+
+public class CodeIntelligenceSelfProposalTests
+{
+    [Fact]
+    public void TheWordBeingTypedIsNotProposedToItself()
+    {
+        // "Inp" + new line + "Gra" parses as the declaration "Inp Gra": Gra must not propose itself.
+        using var dir = new TempDirectory();
+        ProjectTools.Create(dir.Path, "Test", "dev.test.self");
+        string text = "using ZTX16;\nInp\nGra";
+        CodeCompletionResult result = CodeIntelligence.Complete(dir.Path, "code/Game.cs", text, 2, 3, ProjectFixtures.CoreDirectory);
+        Assert.DoesNotContain(result.Items, i => i.Label == "Gra");
+        Assert.Contains(result.Items, i => i.Label == "Graphics");
+    }
+}

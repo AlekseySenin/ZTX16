@@ -173,6 +173,12 @@ public static class CodeIntelligence
         var overloads = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (ISymbol symbol in symbols)
         {
+            // The word being typed may itself parse as a declaration ("Inp Gra"): never propose it to itself.
+            if (symbol.Locations.Any(l => l.SourceTree == tree && l.SourceSpan.Start == start))
+            {
+                continue;
+            }
+
             if (!symbol.CanBeReferencedByName || !model.IsAccessible(start, symbol) || IsObjectNoise(symbol)
                 || (symbol is IMethodSymbol m && m.MethodKind is not (MethodKind.Ordinary or MethodKind.ReducedExtension or MethodKind.LocalFunction)))
             {

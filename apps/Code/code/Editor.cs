@@ -10,7 +10,7 @@ namespace ZTX16Code;
 /// </summary>
 /// <remarks>
 /// Keys: Ctrl+O explorer, Ctrl+S save, Ctrl+Shift+S save as, Ctrl+N new, F6 compile, F5 compile and run,
-/// Ctrl+L log, Ctrl+F find (F3 next), Ctrl+Z/Ctrl+Y undo/redo, Ctrl+A/C/X/V, Tab/Shift+Tab indent,
+/// Ctrl+L log, Ctrl+F find (F3 next, F2 or Shift+F3 previous), Ctrl+Z/Ctrl+Y undo/redo, Ctrl+A/C/X/V, Tab/Shift+Tab indent,
 /// Esc closes a panel or returns to the Console. Host keys: F1 Console, F2 this editor.
 /// </remarks>
 public sealed class Editor : ICartridge
@@ -103,7 +103,9 @@ public sealed class Editor : ICartridge
     private const int CompletionRows = 8;
     private bool _completionPending;
     private bool _completionOpen;
-    private bool _completionSuppressed;     // after Esc or accepting: no automatic popup until the word ends
+    // After Esc, Enter or accepting, the automatic popup stays closed for that word (line and start column) only.
+    private int _suppressLine = -1;
+    private int _suppressStart = -1;
     private bool _completionManual;         // opened with Ctrl+Space: shown for any word length
     private int _popupX, _popupY, _popupWidth, _popupHeight, _popupRows;
     private bool _wheelUsed;                // the wheel scrolled the popup this tick, not the text
@@ -393,9 +395,9 @@ public sealed class Editor : ICartridge
 
         string prefix = Strings.ToLower(Strings.Sub(_doc.Lines[_doc.Line], _completionStart, _doc.Column - _completionStart));
         bool afterDot = _completionStart > 0 && _doc.Lines[_doc.Line][_completionStart - 1] == '.';
-        if (!afterDot && !_completionManual && prefix.Length < 3)
+        if (!afterDot && !_completionManual && prefix.Length < 1)
         {
-            CloseCompletion();       // proposals appear from the third character of a word
+            CloseCompletion();       // the word was erased
             return;
         }
         _cShown.Clear();
@@ -421,6 +423,17 @@ public sealed class Editor : ICartridge
         _completionSelected = 0;
         _completionScroll = 0;
     }
+
+    // Keeps the automatic popup closed for the word at the cursor (after Esc, Enter or accepting a proposal).
+    private void SuppressCompletion()
+    {
+        _suppressLine = _doc.Line;
+        _suppressStart = _doc.Column - WordLengthBeforeCursor();
+    }
+
+    // True while the cursor is still in the word the popup was dismissed for; any other word may open it.
+    private bool IsSuppressedHere() =>
+        _suppressLine == _doc.Line && _suppressStart == _doc.Column - WordLengthBeforeCursor();
 
     private void CloseCompletion()
     {
@@ -472,13 +485,13 @@ public sealed class Editor : ICartridge
         {
             // Enter keeps its meaning (a new line); it only closes the popup.
             CloseCompletion();
-            _completionSuppressed = true;
+            SuppressCompletion();
         }
 
         if (Input.WasKeyPressed(Key.Escape))
         {
             CloseCompletion();
-            _completionSuppressed = true;
+            SuppressCompletion();
             used = true;
         }
 
@@ -512,7 +525,7 @@ public sealed class Editor : ICartridge
 
         _doc.Insert(label);
         CloseCompletion();
-        _completionSuppressed = true;
+        SuppressCompletion();
     }
 
     private static string KindLetter(int kind)
@@ -557,9 +570,13 @@ public sealed class Editor : ICartridge
         {
             OpenFind();
         }
-        else if (Input.WasKeyPressed(Key.F3))
+        else if (Input.WasKeyPressed(Key.F3) && !Shift())
         {
             FindNext();
+        }
+        else if (Input.WasKeyPressed(Key.F2) || (Input.WasKeyPressed(Key.F3) && Shift()))
+        {
+            FindPrevious();
         }
     }
 
@@ -586,13 +603,13 @@ public sealed class Editor : ICartridge
             else if (!IsWord(last))
             {
                 CloseCompletion();
-                _completionSuppressed = false;            // a new word may start
+                _suppressLine = -1;                       // a new word may start
             }
             else if (_completionOpen)
             {
                 Refilter();
             }
-            else if (!_completionSuppressed && !IsDigitChar(WordStartChar()) && WordLengthBeforeCursor() >= 3)
+            else if (!IsSuppressedHere() && !IsDigitChar(WordStartChar()) && WordLengthBeforeCursor() >= 1)
             {
                 RequestCompletion();
             }
@@ -1350,7 +1367,14 @@ public sealed class Editor : ICartridge
 
         if (Input.WasKeyPressed(Key.Enter))
         {
-            FindNext();
+            if (Shift())
+            {
+                FindPrevious();
+            }
+            else
+            {
+                FindNext();
+            }
         }
 
         if (Input.WasKeyPressed(Key.Escape))
@@ -1381,6 +1405,57 @@ public sealed class Editor : ICartridge
             if (step == count && found >= startColumn)
             {
                 found = -1;
+            }
+
+            if (found >= 0)
+            {
+                _doc.MoveTo(line, found, false);
+                _doc.MoveTo(line, found + needle.Length, true);
+                SetStatus("Found at line " + (line + 1).ToString(), InfoColor);
+                return;
+            }
+        }
+
+        SetStatus("Not found: " + _findText, ErrorColor);
+    }
+
+    // Finds the previous occurrence before the cursor (or before the current match), wrapping, and selects it.
+    private void FindPrevious()
+    {
+        if (_findText.Length == 0)
+        {
+            OpenFind();
+            return;
+        }
+
+        string needle = Strings.ToLower(_findText);
+        int count = _doc.Lines.Count;
+        int startLine = _doc.Line;
+        int startColumn = _doc.Column;
+        if (_doc.HasSelection)
+        {
+            int endLine, endColumn;
+            _doc.SelectionRange(out startLine, out startColumn, out endLine, out endColumn);
+        }
+
+        for (int step = 0; step <= count; step++)
+        {
+            int line = ((startLine - step) % count + count) % count;
+            string text = Strings.ToLower(_doc.Lines[line]);
+
+            // The last match in the line; on the starting line only those left of the cursor (first visit) or,
+            // after wrapping around, only those right of it.
+            int found = -1;
+            int at = Strings.IndexOf(text, needle, 0);
+            while (at >= 0)
+            {
+                bool allowed = step == 0 ? at < startColumn : step == count ? at >= startColumn : true;
+                if (allowed)
+                {
+                    found = at;
+                }
+
+                at = Strings.IndexOf(text, needle, at + 1);
             }
 
             if (found >= 0)
@@ -2078,7 +2153,7 @@ public sealed class Editor : ICartridge
             Graphics.FillRect(Layer, 2 + (text.Length * CharWidth), y + 2, 1, LineHeight - 1, Cursor);
         }
 
-        Text.Draw(Layer, "Enter/F3 next  Esc close", Screen - (24 * CharWidth) - 2, y + 2, GutterText, Font);
+        Text.Draw(Layer, "F3 next  F2 prev  Esc", Screen - (21 * CharWidth) - 2, y + 2, GutterText, Font);
     }
 
     private void DrawExplorer()

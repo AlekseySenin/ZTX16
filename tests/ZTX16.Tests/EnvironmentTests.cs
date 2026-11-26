@@ -592,15 +592,52 @@ public class CompletionAndBracketTests
     }
 
     [Fact]
-    public void PopupNeedsThreeCharacters()
+    public void PopupOpensFromTheFirstCharacter()
     {
         using EnvironmentDriver env = Start();
         env.Press(Key.Down);
         env.Text("I");
-        env.Text("n");
-        Assert.False(env.TickUntil(() => PopupRow(env) >= 0, 60), "two characters must not open the popup");
-        env.Text("p");
-        Assert.True(env.TickUntil(() => PopupRow(env) >= 0), "the third character opens it");
+        Assert.True(env.TickUntil(() => PopupRow(env) >= 0), "one character opens the popup");
+    }
+
+    [Fact]
+    public void CompletionStillWorksAfterEnterClosedThePopup()
+    {
+        // Regression: Enter used to switch the automatic popup off until a space or symbol was typed.
+        using EnvironmentDriver env = Start();
+
+        // Inside Initialize: the end of line 15 ("        Graphics.Fill(0, 18);"), then a new line.
+        for (int i = 0; i < 14; i++)
+        {
+            env.Press(Key.Down);
+        }
+
+        env.Press(Key.End);
+        env.Press(Key.Enter);
+        env.Text("Inp");
+        Assert.True(env.TickUntil(() => PopupRow(env) >= 0));
+        env.Press(Key.Enter);                               // closes the popup, new line
+        Assert.Equal(-1, PopupRow(env));
+        env.Text("Gra");
+        Assert.True(env.TickUntil(() => PopupRow(env) >= 0), "the next word must open the popup again");
+        env.Press(Key.Tab);
+        Assert.Equal("Inp", Line(env, 15).Trim());
+        Assert.Equal("Graphics", Line(env, 16).Trim());
+    }
+
+    [Fact]
+    public void FindNextWithF3AndPreviousWithF2()
+    {
+        using EnvironmentDriver env = Start();
+        env.Press(Key.F, ctrl: true);
+        env.Text("Graphics");
+        env.Press(Key.Enter);                               // first: line 14 "Graphics.UsePalette"
+        env.Press(Key.F3);                                  // next: line 15 "Graphics.Fill"
+        env.Press(Key.F2);                                  // previous: back to line 14
+        env.Press(Key.Escape);                              // close the find bar; the match stays selected
+        env.Text("X");                                      // replaces the selected match
+        Assert.Equal("        X.UsePalette(\"default\");", Line(env, 13));
+        Assert.Equal("        Graphics.Fill(0, 18);", Line(env, 14));
     }
 
     [Fact]

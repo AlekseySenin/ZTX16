@@ -330,7 +330,8 @@ internal sealed unsafe class SdlHost : IDisposable
                 _environment.AfterTick();
                 return true;
 
-            case SDL_Scancode.SDL_SCANCODE_F2 when _environment is not null:
+            // In the code editor itself F2 belongs to the editor (find previous).
+            case SDL_Scancode.SDL_SCANCODE_F2 when _environment is not null && _environment.Active?.Name != "code":
                 _environment.SwitchTo("code");
                 _environment.AfterTick();
                 return true;
