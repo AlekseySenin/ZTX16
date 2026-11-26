@@ -445,6 +445,54 @@ public static class Audio
 }
 
 /// <summary>
+/// Persistent Storage: Storage Entries (type, name, opaque binary data) in the running cartridge's own Game ID
+/// namespace. Entries survive the cartridge ending and starting again. Storage does not interpret the data;
+/// use <c>ByteWriter</c>/<c>ByteReader</c> (or any other serialization) to build it.
+/// </summary>
+/// <remarks>
+/// Types and names are 1..64 characters without control characters. Limits: an entry up to 1 MiB, at most
+/// 1024 entries and 16 MiB per game. Breaking a rule or a limit stops the cartridge with an error.
+/// </remarks>
+public static class Storage
+{
+    /// <summary>Creates or replaces an entry.</summary>
+    [Syscall("storage.write")]
+    public static void Write(string type, string name, byte[] data) => throw new NotInVmException();
+
+    /// <summary>The entry's data, or null if there is no such entry.</summary>
+    [Syscall("storage.read")]
+    public static byte[]? Read(string type, string name) => throw new NotInVmException();
+
+    /// <summary>True if the entry exists.</summary>
+    [Syscall("storage.exists")]
+    public static bool Exists(string type, string name) => throw new NotInVmException();
+
+    /// <summary>Removes an entry. Returns false if it did not exist.</summary>
+    [Syscall("storage.delete")]
+    public static bool Delete(string type, string name) => throw new NotInVmException();
+
+    /// <summary>Number of entry types in use.</summary>
+    [Syscall("storage.type_count")]
+    public static int TypeCount() => throw new NotInVmException();
+
+    /// <summary>An entry type in use (sorted).</summary>
+    [Syscall("storage.type_name")]
+    public static string TypeName(int index) => throw new NotInVmException();
+
+    /// <summary>Number of entries of a type.</summary>
+    [Syscall("storage.count")]
+    public static int Count(string type) => throw new NotInVmException();
+
+    /// <summary>The name of an entry of a type (sorted).</summary>
+    [Syscall("storage.name")]
+    public static string Name(string type, int index) => throw new NotInVmException();
+
+    /// <summary>True if entries are kept on persistent storage (false when the host keeps them in memory only).</summary>
+    [Syscall("storage.is_persistent")]
+    public static bool IsPersistent() => throw new NotInVmException();
+}
+
+/// <summary>
 /// Instrument, Sequence and Song resources in their flat runtime form (32-bit values and a string table).
 /// Use <c>Instrument.Load</c>, <c>Sequence.Load</c> and <c>Song.Load</c>, which decode them.
 /// </summary>

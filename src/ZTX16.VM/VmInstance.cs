@@ -914,6 +914,28 @@ public sealed class VmInstance : ISyscallContext
     }
 
     /// <inheritdoc />
+    byte[]? ISyscallContext.ReadByteArray(long handle)
+    {
+        if (handle == 0)
+        {
+            return null;
+        }
+
+        return _heap.Get(handle) is ArrayObject { Kind: VmArrayKind.Bits8 } array
+            ? ((byte[])array.Data).ToArray()
+            : throw new ArgumentException("Argument is not a byte[].");
+    }
+
+    /// <inheritdoc />
+    long ISyscallContext.NewByteArray(byte[] value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        var array = new ArrayObject(VmArrayKind.Bits8, value.Length);
+        value.CopyTo((byte[])array.Data, 0);
+        return Allocate(array, _syscallFunction ?? _functions[0], _syscallOffset);
+    }
+
+    /// <inheritdoc />
     long ISyscallContext.NewString(string value)
     {
         ArgumentNullException.ThrowIfNull(value);

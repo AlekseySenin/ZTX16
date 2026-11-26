@@ -32,7 +32,7 @@ dotnet build samples/HelloSquare
 dotnet run --project src/ZTX16.Host -- --exe samples/HelloSquare/bin/Debug/net10.0/HelloSquare.ztx
 ```
 
-HelloSquare: arrows / WASD / D-pad / left stick move a ship sprite (from an indexed PNG tilemap) with an animated engine flame; it turns to face its direction, slides along the brick walls of the "stage" level and collects its gems, with sound-effect voices and a background song; text uses the built-in font; Space toggles the scrolling background, P cycles palettes, C shows colliders, M toggles the music, Escape exits.
+HelloSquare: arrows / WASD / D-pad / left stick move a ship sprite (from an indexed PNG tilemap) with an animated engine flame; it turns to face its direction, slides along the brick walls of the "stage" level and collects its gems (scattered randomly from the second launch; the best time is saved), with sound-effect voices and a background song; text uses the built-in font; Space toggles the scrolling background, P cycles palettes, C shows colliders, M toggles the music, Escape exits.
 
 Resource files in a project: palettes `*.pal` (text), tilemaps `*.png` (indexed color, up to 256×256), sprites `*.sprite`, fonts `*.font`, animations `*.anim`, levels `*.level`, wavetables `*.wavetable`, instruments `*.instrument`, sequences `*.sequence` and songs `*.song` (JSON), samples `*.wav`. See [IMPLEMENTATION_NOTES.md](Documents/IMPLEMENTATION_NOTES.md) for the formats.
 

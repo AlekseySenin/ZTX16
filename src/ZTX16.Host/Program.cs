@@ -13,6 +13,7 @@ HostShell.AttachConsole();
 HostOptions options;
 IRuntimeProgram program;
 ResourceStore? resources = null;
+ZTX16.Platform.Storage.StorageSystem? storage = null;
 string title = "ZTX16";
 try
 {
@@ -33,7 +34,7 @@ try
     {
         HostProgram.VmDemo => VmProgram.Load(VmDemoCartridge.BuildExecutable()),
         HostProgram.Executable when options.ExecutablePath!.EndsWith(CartridgeFile.Extension, StringComparison.OrdinalIgnoreCase)
-            => LoadCartridge(options.ExecutablePath, out resources, out title),
+            => LoadCartridge(options.ExecutablePath, out resources, out title, out storage),
         HostProgram.Executable => VmProgram.Load(File.ReadAllBytes(options.ExecutablePath)),
         _ => new DiagnosticProgram(),
     };
@@ -48,7 +49,7 @@ catch (Exception e) when (e is ArgumentException or IOException or UnauthorizedA
 using var host = new SdlHost(options, title);
 try
 {
-    return host.Run(program, resources);
+    return host.Run(program, resources, storage);
 }
 catch (Exception e) when (e is VmTrapException or LinkException)
 {
@@ -63,12 +64,17 @@ catch (InvalidOperationException e)
 }
 
 // Loads a packed cartridge: the executable runs in the VM, the resources go to the session.
-static IRuntimeProgram LoadCartridge(string path, out ResourceStore? resources, out string title)
+static IRuntimeProgram LoadCartridge(string path, out ResourceStore? resources, out string title, out ZTX16.Platform.Storage.StorageSystem storage)
 {
     CartridgeContent cartridge = CartridgeFile.Read(File.ReadAllBytes(path));
     resources = new ResourceStore(cartridge.Resources);
     string name = cartridge.Config.Name;
     title = string.IsNullOrWhiteSpace(name) ? "ZTX16" : $"{name} — ZTX16";
+
+    // Storage lives in the user profile, one directory per Game ID: %LOCALAPPDATA%/ZTX16/storage/<game id>.
+    string root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ZTX16", "storage",
+        ZTX16.Platform.Storage.DirectoryStorage.Escape(cartridge.Config.GameId));
+    storage = new ZTX16.Platform.Storage.StorageSystem(new ZTX16.Platform.Storage.DirectoryStorage(root));
     return VmProgram.Load(cartridge.Executable);
 }
 

@@ -485,6 +485,35 @@ public class SampleCartridgeTests
         Assert.Contains(pcm, s => s != 0);
     }
 
+    [Fact]
+    public void HelloSquareKeepsProgressAndScattersGemsDeterministically()
+    {
+        string root = CartridgeCompiler.RepositoryRoot;
+        Cartridge.CartridgeContent cartridge = ProjectBuilder.Build(Path.Combine(root, "samples", "HelloSquare"), ProjectFixtures.CoreDirectory);
+        var storage = new Platform.Storage.StorageSystem();
+
+        (int Runs, int[] Gems) Launch(Platform.Storage.StorageSystem store)
+        {
+            var session = new RuntimeSession(VmProgram.Load(cartridge.Executable), 48000, new ResourceStore(cartridge.Resources), store);
+            session.Initialize();
+            session.RunTick(TimeSpan.Zero);
+            var reader = new BinaryReader(new MemoryStream(store.Read("save", "progress")!));
+            int[] gemPixels = Enumerable.Range(0, 256 * 256).Where(i => session.Graphics.Layers[2].GetPixel(i % 256, i / 256) == 28).ToArray();
+            return (reader.ReadInt32(), gemPixels);
+        }
+
+        (int runs1, int[] gems1) = Launch(storage);
+        (int runs2, int[] gems2) = Launch(storage);
+        Assert.Equal(1, runs1);
+        Assert.Equal(2, runs2);
+        Assert.NotEqual(gems1, gems2);                      // launch 2 scatters the gems
+
+        // Another machine on its second launch gets exactly the same layout.
+        var other = new Platform.Storage.StorageSystem();
+        Launch(other);
+        Assert.Equal(gems2, Launch(other).Gems);
+    }
+
     private static void RunTicks(RuntimeSession session, int count)
     {
         for (int i = 0; i < count; i++)

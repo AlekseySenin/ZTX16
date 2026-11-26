@@ -23,6 +23,13 @@ public interface ISyscallContext
     /// <summary>Copies an <c>int[]</c> argument (null for a null reference).</summary>
     /// <exception cref="ArgumentException">The reference is not an array of 32-bit integers.</exception>
     int[]? ReadInt32Array(long handle);
+
+    /// <summary>Copies a <c>byte[]</c> (or other 8-bit array) argument (null for a null reference).</summary>
+    /// <exception cref="ArgumentException">The reference is not an array of 8-bit values.</exception>
+    byte[]? ReadByteArray(long handle);
+
+    /// <summary>Allocates a <c>byte[]</c> on the VM heap with a copy of <paramref name="value"/>, for use as a result.</summary>
+    long NewByteArray(byte[] value);
 }
 
 /// <summary>Thrown when a module imports a syscall the runtime does not provide.</summary>

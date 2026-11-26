@@ -530,3 +530,39 @@ structs, which the VM does not support; C# 12 uses arrays.
   runtime and SDL3 inside, SDL3 is extracted on first start) to `dist/ZTX16/` and builds the samples into
   `dist/ZTX16/cartridges/`. `dist/` is ignored by git. Not trimmed (SDL3-CS and the VM use reflection-free
   code, but trimming is untested) and not code-signed.
+
+## Storage and DeterministicRandom
+
+### DeterministicRandom (Core, `Random.cs`)
+
+- Pure cartridge code, no syscalls: **xoshiro128\*\*** (four 32-bit words of state), seeded by expanding the
+  64-bit seed with **SplitMix64** (two outputs → four words; an all-zero state becomes {1,0,0,0}). The
+  algorithm and the way each operation consumes it are platform contract: same seed + same calls = same
+  results on every machine and version.
+- Operations: `Next(min, max)` and `Next(max)` (lower-inclusive, upper-exclusive; Lemire multiply-and-reject,
+  so no modulo bias; one or more 32-bit draws), `NextInt()` (raw 32 bits), `NextFloat()` (top 24 bits × 2⁻²⁴,
+  [0, 1)), `NextFloat(min, max)` (returns `min` in the rare case rounding would give `max`), `NextBool()`
+  (top bit), `Choice(T[])` / `Choice(List<T>)` (one `Next(count)`), `GetState()` / `SetState(int[4])` to save
+  and resume. Empty ranges and empty collections stop the cartridge.
+- Tests: the published xoshiro128\*\* vector (state {1,2,3,4} → 11520, 0, 5927040), an independent reference
+  of SplitMix64 seeding and xoshiro128\*\*, frozen golden values (seed 2026, `Next(100)` × 10), VM = .NET for
+  every operation interleaved over several seeds in Debug and Release, same seed → same / different seed →
+  different, exact resume from a saved state, range and distribution checks.
+
+### Storage
+
+- `Storage` (SDK, `storage.*`): `Write(type, name, byte[])`, `Read` (null if missing), `Exists`, `Delete`,
+  `TypeCount`/`TypeName(i)`, `Count(type)`/`Name(type, i)` (sorted ordinal), `IsPersistent()`. The Game ID
+  namespace is implicit. Data is opaque.
+- Rules and provisional limits: type and name 1..64 characters without control characters; entry ≤ 1 MiB;
+  ≤ 1024 entries and ≤ 16 MiB per Game ID. Violations (and host I/O errors) trap the cartridge.
+- Platform: `StorageSystem` validates and enforces limits over an `IStorageBackend`: `MemoryStorage` (tests,
+  programs without a Game ID — not persistent) or `DirectoryStorage` (`root/<type>/<name>.entry`, names escaped
+  so any valid name is a safe, case-distinct file name; write to `.tmp` then replace, so entries are never
+  half-written). The reference host uses `%LOCALAPPDATA%/ZTX16/storage/<game id>/` for `.ztx` cartridges.
+- `ISyscallContext` gained `ReadByteArray` and `NewByteArray` (8-bit arrays cross the ABI).
+- Serialization is a separate Core layer: `ByteWriter` / `ByteReader` (little-endian byte, bool, int, long,
+  float as exact IEEE bits, string as length + UTF-16 code units with −1 for null, byte arrays). `FloatBits`
+  converts float ↔ bits by arithmetic only (the VM has no reinterpret instruction); NaN becomes 0x7FC00000.
+- HelloSquare keeps its launch count and best all-gems time in the `save/progress` entry, and from the second
+  launch scatters the gems over free spots with `DeterministicRandom(launch number)`.

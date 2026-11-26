@@ -44,11 +44,11 @@ internal sealed unsafe class SdlHost : IDisposable
     }
 
     /// <summary>Runs <paramref name="program"/> until it exits or the window closes. Returns the process exit code.</summary>
-    public int Run(IRuntimeProgram program, ResourceStore? resources = null)
+    public int Run(IRuntimeProgram program, ResourceStore? resources = null, ZTX16.Platform.Storage.StorageSystem? storage = null)
     {
         CreateWindowAndRenderer();
 
-        var session = new RuntimeSession(program, AudioSampleRate, resources);
+        var session = new RuntimeSession(program, AudioSampleRate, resources, storage);
         session.Machine.Warned += message => Console.Error.WriteLine($"ZTX16: warning: {message}");
         _input = new SdlInputTranslator(session.Input);
         _audio = new SdlAudioOutput(session.Audio);

@@ -48,6 +48,16 @@ public sealed class Game : ICartridge
     private bool humming;
     private int chimeTicks;
 
+    // Progress kept in Storage across launches: how many times the game started and the best time (ticks)
+    // for collecting every gem. The launch number also seeds the random gem layout.
+    private int runs;
+    private int bestTicks = -1;
+    private int finishTicks = -1;
+
+    // Gem spots clear of the walls; launches after the first scatter the gems over them.
+    private static readonly int[] SpotX = { 20, 84, 184, 220, 120, 20, 100, 230, 130, 70, 220, 100 };
+    private static readonly int[] SpotY = { 200, 100, 70, 200, 20, 20, 220, 120, 140, 30, 30, 180 };
+
     public void Initialize()
     {
         if (Resources.Exists(ResourceType.Sprite, "ship"))
@@ -94,7 +104,55 @@ public sealed class Game : ICartridge
         }
 
         SetUpAudio();
+        LoadProgress();
+        runs++;
+        SaveProgress();
+        if (gems is not null && runs > 1)
+        {
+            ScatterGems(new DeterministicRandom(runs));
+        }
     }
+
+    private void LoadProgress()
+    {
+        byte[]? data = Storage.Read("save", "progress");
+        if (data is null)
+        {
+            return;
+        }
+
+        var reader = new ByteReader(data);
+        runs = reader.ReadInt();
+        bestTicks = reader.ReadInt();
+    }
+
+    private void SaveProgress()
+    {
+        var writer = new ByteWriter();
+        writer.WriteInt(runs);
+        writer.WriteInt(bestTicks);
+        Storage.Write("save", "progress", writer.ToArray());
+    }
+
+    // Each gem takes a different random spot; the same launch number always gives the same layout.
+    private void ScatterGems(DeterministicRandom random)
+    {
+        var free = new List<int>();
+        for (int i = 0; i < SpotX.Length; i++)
+        {
+            free.Add(i);
+        }
+
+        for (int g = 0; g < gems!.ActorCount && free.Count > 0; g++)
+        {
+            int spot = random.Choice(free);
+            free.Remove(spot);
+            gems.GetActor(g).SetPosition(SpotX[spot], SpotY[spot]);
+        }
+    }
+
+    // "12.3" from a tick count.
+    private static string Seconds(int ticks) => (ticks / 60).ToString() + "." + (ticks * 10 / 60 % 10).ToString();
 
     private void SetUpAudio()
     {
@@ -272,6 +330,18 @@ public sealed class Game : ICartridge
 
 
         Text.Draw(Hud, "T+" + (Machine.TickCount / 60).ToString(), 200, 242, 4, "");
+        string progress = "RUN " + runs.ToString();
+        if (finishTicks >= 0)
+        {
+            progress += "  TIME " + Seconds(finishTicks);
+        }
+
+        if (bestTicks >= 0)
+        {
+            progress += "  BEST " + Seconds(bestTicks);
+        }
+
+        Text.Draw(Hud, progress, 8, 230, 4, "");
         Text.Draw(Hud, "P palette C colliders M music", 16, 6, 4, "");
     }
 
@@ -298,6 +368,12 @@ public sealed class Game : ICartridge
                 if (gemsCollected == gems.ActorCount)
                 {
                     fanfare?.Play(60);   // the sample at its own pitch
+                    finishTicks = (int)Machine.TickCount;
+                    if (bestTicks < 0 || finishTicks < bestTicks)
+                    {
+                        bestTicks = finishTicks;
+                        SaveProgress();
+                    }
                 }
             }
         }

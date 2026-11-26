@@ -14,12 +14,13 @@ public sealed class RuntimeSession
     private bool _initialized;
     private bool _deinitialized;
 
-    internal RuntimeSession(IRuntimeProgram program, int audioSampleRate, ResourceStore? resources = null)
+    internal RuntimeSession(IRuntimeProgram program, int audioSampleRate, ResourceStore? resources = null, Storage.StorageSystem? storage = null)
     {
         ArgumentNullException.ThrowIfNull(program);
         _program = program;
         Audio = new AudioEngine(audioSampleRate);
         Resources = resources ?? ResourceStore.Empty;
+        Storage = storage ?? new Storage.StorageSystem();
     }
 
     /// <summary>Machine API.</summary>
@@ -33,6 +34,9 @@ public sealed class RuntimeSession
 
     /// <summary>Audio hardware.</summary>
     public AudioEngine Audio { get; }
+
+    /// <summary>Persistent Storage of the running cartridge (its Game ID namespace).</summary>
+    public Storage.StorageSystem Storage { get; }
 
     /// <summary>Resources of the running cartridge.</summary>
     public ResourceStore Resources { get; }

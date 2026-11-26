@@ -187,6 +187,23 @@ internal static class PlatformSyscalls
         Bind("audio.adsr_value", a => FromF32(audio.GetAdsrValue(ToI32(a[0]))));
         BindWithContext("audio.sample_length", (c, a) => resources.Sample(Name(c, a[0])).Length);
 
+        // Storage (the session's Game ID namespace)
+        Storage.StorageSystem storage = session.Storage;
+        BindWithContext("storage.write", (c, a) =>
+        {
+            byte[] data = c.ReadByteArray(a[2]) ?? throw new ArgumentNullException(nameof(a), "Storage data is null.");
+            storage.Write(Name(c, a[0]), Name(c, a[1]), data);
+            return 0;
+        });
+        BindWithContext("storage.read", (c, a) => storage.Read(Name(c, a[0]), Name(c, a[1])) is { } data ? c.NewByteArray(data) : 0);
+        BindWithContext("storage.exists", (c, a) => storage.Exists(Name(c, a[0]), Name(c, a[1])) ? 1 : 0);
+        BindWithContext("storage.delete", (c, a) => storage.Delete(Name(c, a[0]), Name(c, a[1])) ? 1 : 0);
+        Bind("storage.type_count", _ => storage.Types().Count);
+        BindWithContext("storage.type_name", (c, a) => c.NewString(Indexed(storage.Types(), ToI32(a[0]), "entry types")));
+        BindWithContext("storage.count", (c, a) => storage.Names(Name(c, a[0])).Count);
+        BindWithContext("storage.name", (c, a) => c.NewString(Indexed(storage.Names(Name(c, a[0])), ToI32(a[1]), "entries")));
+        Bind("storage.is_persistent", _ => storage.IsPersistent ? 1 : 0);
+
         // Instrument, Sequence and Song value streams (decoded by the Core library)
         BindWithContext("data.value_count", (c, a) => resources.Stream(Type(a[0]), Name(c, a[1])).Data.Length);
         BindWithContext("data.value", (c, a) => StreamValue(c, a));
@@ -286,6 +303,9 @@ internal static class PlatformSyscalls
             return new DrawTransform((flags & 1) != 0, (flags & 2) != 0, ToF32(a[first + 1]), ToF32(a[first + 2]), ToF32(a[first + 3]),
                 ToF32(a[first + 4]), ToF32(a[first + 5]));
         }
+
+        static string Indexed(IReadOnlyList<string> list, int index, string what) =>
+            (uint)index < (uint)list.Count ? list[index] : throw new ArgumentOutOfRangeException(nameof(index), index, $"There are {list.Count} {what}.");
 
         // (type, name, index) arguments of the data value syscalls
         int StreamValue(ISyscallContext c, ReadOnlySpan<long> a)
