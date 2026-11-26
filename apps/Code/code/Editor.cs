@@ -86,6 +86,33 @@ public sealed class Editor : ICartridge
     private long _lastClickTick = -100;
     private int _lastClickIndex = -1;
 
+    // Live analysis: problems of the text being edited (0-based positions) and the request in flight.
+    private bool _analyzing;
+    private string _analysisPath = "";
+    private int _analyzedRevision = -1;
+    private int _seenRevision = -1;
+    private long _lastEditTick;
+    private readonly List<int> _pLine = new();
+    private readonly List<int> _pColumn = new();
+    private readonly List<int> _pEndLine = new();
+    private readonly List<int> _pEndColumn = new();
+    private readonly List<bool> _pError = new();
+    private readonly List<string> _pText = new();
+
+    // Completion popup.
+    private const int CompletionRows = 8;
+    private bool _completionPending;
+    private bool _completionOpen;
+    private bool _completionSuppressed;     // after Esc or accepting: no automatic popup until the word ends
+    private int _completionLine;
+    private int _completionStart;
+    private int _completionSelected;
+    private int _completionScroll;
+    private readonly List<string> _cLabel = new();
+    private readonly List<int> _cKind = new();
+    private readonly List<string> _cDetail = new();
+    private readonly List<int> _cShown = new();
+
     // Build log.
     private readonly List<int> _logKind = new();          // 0 error, 1 warning, 2 info
     private readonly List<string> _logFile = new();
@@ -175,6 +202,306 @@ public sealed class Editor : ICartridge
         }
 
         KeepCursorVisible();
+        LiveAnalysis();
+        PollCompletion();
+    }
+
+    // ---- live analysis --------------------------------------------------------------------------------------
+
+    // About 0.3 s after the last change, the text is analysed in the background; results colour names and
+    // underline problems.
+    private void LiveAnalysis()
+    {
+        if (_doc.Revision != _seenRevision)
+        {
+            _seenRevision = _doc.Revision;
+            _lastEditTick = Machine.TickCount;
+        }
+
+        if (_analyzing && CodeAnalysis.AnalysisReady())
+        {
+            _analyzing = false;
+            if (_analysisPath == _path)
+            {
+                LoadProblems(CodeAnalysis.Problems());
+                _highlighter.SetSemantic(CodeAnalysis.Colors(), _doc);
+            }
+        }
+
+        if (!_analyzing && _path.Length > 0 && _doc.Revision != _analyzedRevision && Machine.TickCount - _lastEditTick >= 18)
+        {
+            _analyzedRevision = _doc.Revision;
+            if (CodeAnalysis.Analyze(_path, _doc.Text()))
+            {
+                _analyzing = true;
+                _analysisPath = _path;
+            }
+        }
+    }
+
+    private void LoadProblems(string text)
+    {
+        ClearProblems();
+        if (text.Length == 0)
+        {
+            return;
+        }
+
+        List<string> lines = Strings.Split(text, '\n');
+        for (int i = 0; i < lines.Count; i++)
+        {
+            List<string> f = Strings.Split(lines[i], '\t');
+            int line, column, endLine, endColumn;
+            if (f.Count >= 7 && Strings.TryParseInt(f[1], out line) && Strings.TryParseInt(f[2], out column)
+                && Strings.TryParseInt(f[3], out endLine) && Strings.TryParseInt(f[4], out endColumn))
+            {
+                _pLine.Add(line);
+                _pColumn.Add(column);
+                _pEndLine.Add(endLine);
+                _pEndColumn.Add(endColumn);
+                _pError.Add(f[0] == "E");
+                _pText.Add(f[5] + ": " + f[6]);
+            }
+        }
+    }
+
+    private void ClearProblems()
+    {
+        _pLine.Clear();
+        _pColumn.Clear();
+        _pEndLine.Clear();
+        _pEndColumn.Clear();
+        _pError.Clear();
+        _pText.Clear();
+    }
+
+    // The live problem under the cursor (or anywhere on its line), or -1.
+    private int LiveProblemAtCursor()
+    {
+        int onLine = -1;
+        for (int i = 0; i < _pLine.Count; i++)
+        {
+            if (_doc.Line < _pLine[i] || _doc.Line > _pEndLine[i])
+            {
+                continue;
+            }
+
+            bool afterStart = _doc.Line > _pLine[i] || _doc.Column >= _pColumn[i];
+            bool beforeEnd = _doc.Line < _pEndLine[i] || _doc.Column <= _pEndColumn[i];
+            if (afterStart && beforeEnd)
+            {
+                return i;
+            }
+
+            if (onLine < 0 || (_pError[i] && !_pError[onLine]))
+            {
+                onLine = i;
+            }
+        }
+
+        return onLine;
+    }
+
+    private int LiveCount(bool errors)
+    {
+        int n = 0;
+        for (int i = 0; i < _pError.Count; i++)
+        {
+            if (_pError[i] == errors)
+            {
+                n++;
+            }
+        }
+
+        return n;
+    }
+
+    // ---- completion -----------------------------------------------------------------------------------------
+
+    private void RequestCompletion()
+    {
+        if (_path.Length == 0 || _completionPending)
+        {
+            return;
+        }
+
+        if (CodeAnalysis.Complete(_path, _doc.Text(), _doc.Line, _doc.Column))
+        {
+            _completionPending = true;
+            _completionLine = _doc.Line;
+        }
+    }
+
+    private void PollCompletion()
+    {
+        if (!_completionPending || !CodeAnalysis.CompletionReady())
+        {
+            return;
+        }
+
+        _completionPending = false;
+        if (_doc.Line != _completionLine || _panel != PanelNone)
+        {
+            return;
+        }
+
+        string text = CodeAnalysis.Completion();
+        _cLabel.Clear();
+        _cKind.Clear();
+        _cDetail.Clear();
+        List<string> lines = Strings.Split(text, '\n');
+        int start;
+        if (lines.Count < 2 || !Strings.TryParseInt(lines[0], out start))
+        {
+            CloseCompletion();
+            return;
+        }
+
+        for (int i = 1; i < lines.Count; i++)
+        {
+            List<string> f = Strings.Split(lines[i], '\t');
+            int kind;
+            if (f.Count >= 3 && Strings.TryParseInt(f[0], out kind))
+            {
+                _cKind.Add(kind);
+                _cLabel.Add(f[1]);
+                _cDetail.Add(f[2]);
+            }
+        }
+
+        _completionStart = start;
+        _completionOpen = true;
+        Refilter();
+    }
+
+    // Shows the proposals matching the word typed so far: prefix matches first, then other matches.
+    private void Refilter()
+    {
+        if (!_completionOpen)
+        {
+            return;
+        }
+
+        if (_doc.Line != _completionLine || _doc.Column < _completionStart)
+        {
+            CloseCompletion();
+            return;
+        }
+
+        string prefix = Strings.ToLower(Strings.Sub(_doc.Lines[_doc.Line], _completionStart, _doc.Column - _completionStart));
+        _cShown.Clear();
+        for (int pass = 0; pass < 2; pass++)
+        {
+            for (int i = 0; i < _cLabel.Count; i++)
+            {
+                string label = Strings.ToLower(_cLabel[i]);
+                bool prefixMatch = Strings.StartsWith(label, prefix);
+                if ((pass == 0 && prefixMatch) || (pass == 1 && !prefixMatch && prefix.Length > 1 && Strings.Contains(label, prefix)))
+                {
+                    _cShown.Add(i);
+                }
+            }
+        }
+
+        if (_cShown.Count == 0 || (_cShown.Count == 1 && Strings.ToLower(_cLabel[_cShown[0]]) == prefix && prefix.Length > 0))
+        {
+            CloseCompletion();
+            return;
+        }
+
+        _completionSelected = 0;
+        _completionScroll = 0;
+    }
+
+    private void CloseCompletion()
+    {
+        _completionOpen = false;
+        _cShown.Clear();
+    }
+
+    // Keys while the popup is open. Returns true if the key was used by the popup.
+    private bool CompletionKeys()
+    {
+        if (!_completionOpen)
+        {
+            return false;
+        }
+
+        bool used = false;
+        if (Input.WasKeyTyped(Key.Down))
+        {
+            _completionSelected = (_completionSelected + 1) % _cShown.Count;
+            used = true;
+        }
+
+        if (Input.WasKeyTyped(Key.Up))
+        {
+            _completionSelected = (_completionSelected + _cShown.Count - 1) % _cShown.Count;
+            used = true;
+        }
+
+        if (Input.WasKeyTyped(Key.PageDown))
+        {
+            _completionSelected = Document.Min(_cShown.Count - 1, _completionSelected + CompletionRows);
+            used = true;
+        }
+
+        if (Input.WasKeyTyped(Key.PageUp))
+        {
+            _completionSelected = Document.Max(0, _completionSelected - CompletionRows);
+            used = true;
+        }
+
+        if (Input.WasKeyPressed(Key.Enter) || Input.WasKeyPressed(Key.KeypadEnter) || Input.WasKeyPressed(Key.Tab))
+        {
+            AcceptCompletion();
+            used = true;
+        }
+
+        if (Input.WasKeyPressed(Key.Escape))
+        {
+            CloseCompletion();
+            _completionSuppressed = true;
+            used = true;
+        }
+
+        if (_completionSelected < _completionScroll)
+        {
+            _completionScroll = _completionSelected;
+        }
+
+        if (_completionSelected >= _completionScroll + CompletionRows)
+        {
+            _completionScroll = _completionSelected - CompletionRows + 1;
+        }
+
+        return used;
+    }
+
+    private void AcceptCompletion()
+    {
+        if (!_completionOpen || _cShown.Count == 0)
+        {
+            return;
+        }
+
+        string label = _cLabel[_cShown[_completionSelected]];
+        int line = _doc.Line, column = _doc.Column;
+        _doc.MoveTo(line, _completionStart, false);
+        if (column > _completionStart)
+        {
+            _doc.MoveTo(line, column, true);
+        }
+
+        _doc.Insert(label);
+        CloseCompletion();
+        _completionSuppressed = true;
+    }
+
+    private static string KindLetter(int kind)
+    {
+        string letters = "?TMPFLANEVKC";
+        return kind >= 0 && kind < letters.Length ? letters[kind].ToString() : "?";
     }
 
     private void GlobalKeys()
@@ -223,11 +550,41 @@ public sealed class Editor : ICartridge
     {
         bool ctrl = Ctrl();
         bool shift = Shift();
+
+        // While the completion popup is open, Up/Down/PgUp/PgDn/Enter/Tab/Esc belong to it.
+        bool popup = _completionOpen;
+        CompletionKeys();
+
         string typed = Input.GetText();
         if (typed.Length > 0 && !ctrl)
         {
             _doc.Type(typed);
             _blink = 0;
+            char last = typed[typed.Length - 1];
+            if (last == '.')
+            {
+                CloseCompletion();
+                RequestCompletion();
+            }
+            else if (!IsWord(last))
+            {
+                CloseCompletion();
+                _completionSuppressed = false;            // a new word may start
+            }
+            else if (_completionOpen)
+            {
+                Refilter();
+            }
+            else if (!_completionSuppressed && !IsDigitChar(WordStartChar()))
+            {
+                RequestCompletion();
+            }
+        }
+
+        if (ctrl && Input.WasKeyPressed(Key.Space))
+        {
+            CloseCompletion();
+            RequestCompletion();
         }
 
         if (Input.WasKeyTyped(Key.Left))
@@ -242,6 +599,7 @@ public sealed class Editor : ICartridge
             }
 
             _blink = 0;
+            CloseCompletion();
         }
 
         if (Input.WasKeyTyped(Key.Right))
@@ -256,26 +614,27 @@ public sealed class Editor : ICartridge
             }
 
             _blink = 0;
+            CloseCompletion();
         }
 
-        if (Input.WasKeyTyped(Key.Up))
+        if (Input.WasKeyTyped(Key.Up) && !popup)
         {
             _doc.MoveTo(_doc.Line - 1, _doc.Column, shift);
             _blink = 0;
         }
 
-        if (Input.WasKeyTyped(Key.Down))
+        if (Input.WasKeyTyped(Key.Down) && !popup)
         {
             _doc.MoveTo(_doc.Line + 1, _doc.Column, shift);
             _blink = 0;
         }
 
-        if (Input.WasKeyTyped(Key.PageUp))
+        if (Input.WasKeyTyped(Key.PageUp) && !popup)
         {
             _doc.MoveTo(_doc.Line - EditorRows(), _doc.Column, shift);
         }
 
-        if (Input.WasKeyTyped(Key.PageDown))
+        if (Input.WasKeyTyped(Key.PageDown) && !popup)
         {
             _doc.MoveTo(_doc.Line + EditorRows(), _doc.Column, shift);
         }
@@ -304,7 +663,7 @@ public sealed class Editor : ICartridge
             }
         }
 
-        if (Input.WasKeyTyped(Key.Enter) || Input.WasKeyTyped(Key.KeypadEnter))
+        if ((Input.WasKeyTyped(Key.Enter) || Input.WasKeyTyped(Key.KeypadEnter)) && !popup)
         {
             _doc.NewLine();
         }
@@ -313,6 +672,7 @@ public sealed class Editor : ICartridge
         {
             _doc.Backspace();
             _blink = 0;
+            Refilter();
         }
 
         if (Input.WasKeyTyped(Key.Delete))
@@ -320,7 +680,7 @@ public sealed class Editor : ICartridge
             _doc.Delete();
         }
 
-        if (Input.WasKeyTyped(Key.Tab))
+        if (Input.WasKeyTyped(Key.Tab) && !popup)
         {
             _doc.Tab(shift);
         }
@@ -361,7 +721,7 @@ public sealed class Editor : ICartridge
             _doc.Redo();
         }
 
-        if (Input.WasKeyPressed(Key.Escape))
+        if (Input.WasKeyPressed(Key.Escape) && !popup)
         {
             if (_logVisible)
             {
@@ -504,6 +864,7 @@ public sealed class Editor : ICartridge
             int line, column;
             PositionAt(mx, my, out line, out column);
             _doc.MoveTo(line, column, Shift());
+            CloseCompletion();
             _dragging = true;
             _blink = 0;
         }
@@ -586,6 +947,10 @@ public sealed class Editor : ICartridge
 
     private void OpenFile(string path)
     {
+        ClearProblems();
+        _highlighter.ClearSemantic(_doc);
+        CloseCompletion();
+        _analyzedRevision = -1;
         string? text = Workspace.ReadText(path);
         if (text is null)
         {
@@ -636,6 +1001,9 @@ public sealed class Editor : ICartridge
 
     private void DoNew()
     {
+        ClearProblems();
+        _highlighter.ClearSemantic(_doc);
+        CloseCompletion();
         _doc.Load("");
         _path = "";
         _scrollTop = 0;
@@ -1197,6 +1565,7 @@ public sealed class Editor : ICartridge
         Graphics.Clear(Layer);
         _highlighter.Update(_doc);
         DrawText();
+        DrawCompletion();
         DrawToolbar();
         DrawStatus();
         if (_logVisible)
@@ -1277,11 +1646,7 @@ public sealed class Editor : ICartridge
                 Text.Draw(Layer, texts[s], GutterWidth + ((starts[s] - _scrollLeft) * CharWidth), y + 1, colors[s], Font);
             }
 
-            int problem = ProblemAt(line);
-            if (problem >= 0)
-            {
-                Graphics.FillRect(Layer, GutterWidth, y, Screen - GutterWidth, 1, problem == 0 ? ErrorColor : WarningColor);
-            }
+            DrawUnderlines(line, y);
         }
 
         // Gutter: line numbers (drawn over any text scrolled under it).
@@ -1291,7 +1656,7 @@ public sealed class Editor : ICartridge
             int line = _scrollTop + r;
             int y = top - ((r + 1) * LineHeight);
             string number = Strings.PadLeft((line + 1).ToString(), 4);
-            int problem = ProblemAt(line);
+            int problem = WorstProblem(line);
             int color = problem == 0 ? ErrorColor : problem == 1 ? WarningColor : line == _doc.Line ? Cursor : GutterText;
             Text.Draw(Layer, number, 0, y + 1, color, Font);
         }
@@ -1308,6 +1673,116 @@ public sealed class Editor : ICartridge
                     Graphics.FillRect(Layer, x, top - ((row + 1) * LineHeight), 1, LineHeight, Cursor);
                 }
             }
+        }
+    }
+
+    // Live problems: a line under the exact range (warnings yellow, errors red, drawn last so they win).
+    private void DrawUnderlines(int line, int y)
+    {
+        for (int pass = 0; pass < 2; pass++)
+        {
+            for (int i = 0; i < _pLine.Count; i++)
+            {
+                if (_pError[i] != (pass == 1) || line < _pLine[i] || line > _pEndLine[i])
+                {
+                    continue;
+                }
+
+                int from = line == _pLine[i] ? _pColumn[i] : Document.Indent(_doc.Lines[line]);
+                int to = line == _pEndLine[i] ? _pEndColumn[i] : _doc.Lines[line].Length;
+                if (to <= from)
+                {
+                    to = from + 1;
+                }
+
+                int x0 = GutterWidth + ((from - _scrollLeft) * CharWidth);
+                int x1 = GutterWidth + ((to - _scrollLeft) * CharWidth);
+                if (x0 < GutterWidth)
+                {
+                    x0 = GutterWidth;
+                }
+
+                // A dotted "squiggle": every other pixel, alternating rows.
+                for (int x = x0; x < x1 && x < Screen; x++)
+                {
+                    Graphics.SetPixel(Layer, x, y + ((x / 2) % 2), _pError[i] ? ErrorColor : WarningColor);
+                }
+            }
+        }
+    }
+
+    // Worst problem on a line from live analysis or the last build: 0 error, 1 warning, -1 none.
+    private int WorstProblem(int line)
+    {
+        int worst = ProblemAt(line);
+        for (int i = 0; i < _pLine.Count; i++)
+        {
+            if (line >= _pLine[i] && line <= _pEndLine[i])
+            {
+                int kind = _pError[i] ? 0 : 1;
+                if (worst < 0 || kind < worst)
+                {
+                    worst = kind;
+                }
+            }
+        }
+
+        return worst;
+    }
+
+    private void DrawCompletion()
+    {
+        if (!_completionOpen || _cShown.Count == 0 || _panel != PanelNone)
+        {
+            return;
+        }
+
+        int rows = Document.Min(CompletionRows, _cShown.Count);
+        int width = 34 * CharWidth;
+        int height = (rows * LineHeight) + 2;
+        int cursorRow = _doc.Line - _scrollTop;
+        int lineBottom = EditorTop() - ((cursorRow + 1) * LineHeight);
+        int x = GutterWidth + ((_completionStart - _scrollLeft) * CharWidth) - CharWidth - 3;
+        x = Document.Clamp(x, 0, Screen - width);
+        int y = lineBottom - height;                       // below the line…
+        if (y < EditorBottom())
+        {
+            y = lineBottom + LineHeight;                   // …or above it
+        }
+
+        Box(x, y, width, height);
+        for (int r = 0; r < rows; r++)
+        {
+            int index = _completionScroll + r;
+            if (index >= _cShown.Count)
+            {
+                break;
+            }
+
+            int item = _cShown[index];
+            int rowY = y + height - 1 - ((r + 1) * LineHeight);
+            if (index == _completionSelected)
+            {
+                Graphics.FillRect(Layer, x + 1, rowY, width - 2, LineHeight, Selection);
+            }
+
+            int kind = _cKind[item];
+            Text.Draw(Layer, KindLetter(kind), x + 2, rowY + 1, kind == 10 ? Highlighter.Keyword : Highlighter.KindColor(kind) == Highlighter.Plain ? GutterText : Highlighter.KindColor(kind), Font);
+            string label = _cLabel[item];
+            if (label.Length > 31)
+            {
+                label = Strings.Sub(label, 0, 30) + "..";
+            }
+
+            Text.Draw(Layer, label, x + 2 + (2 * CharWidth), rowY + 1, index == _completionSelected ? ButtonText : StatusText, Font);
+        }
+
+        if (_cShown.Count > rows)
+        {
+            // Scroll position bar on the right edge.
+            int barHeight = Document.Max(2, (height - 2) * rows / _cShown.Count);
+            int barY = y + height - 1 - barHeight - (((height - 2 - barHeight) * _completionScroll) / Document.Max(1, _cShown.Count - rows));
+            Graphics.FillRect(Layer, x + width - 2, barY, 1, barHeight, PanelBorder);
         }
     }
 
@@ -1328,12 +1803,30 @@ public sealed class Editor : ICartridge
     {
         Graphics.FillRect(Layer, 0, 0, Screen, StatusHeight, Bar);
         string name = (_doc.Modified ? "*" : "") + (_path.Length == 0 ? "untitled" : FileName(_path));
-        string position = "L" + (_doc.Line + 1).ToString() + ":C" + (_doc.Column + 1).ToString();
+        int errors = LiveCount(true), warnings = LiveCount(false);
+        string counts = errors + warnings == 0 ? "" : errors.ToString() + "E " + warnings.ToString() + "W ";
+        string position = counts + "L" + (_doc.Line + 1).ToString() + ":C" + (_doc.Column + 1).ToString();
         Text.Draw(Layer, name, 2, 1, TitleColor, Font);
         Text.Draw(Layer, position, Screen - (position.Length * CharWidth) - 2, 1, StatusText, Font);
 
-        string message = _statusTicks > 0 ? _status : ProblemTextAt(_doc.Line);
-        int color = _statusTicks > 0 ? _statusColor : ProblemAt(_doc.Line) == 0 ? ErrorColor : WarningColor;
+        string message = _statusTicks > 0 ? _status : "";
+        int color = _statusColor;
+        int live = LiveProblemAtCursor();
+        if (_completionOpen && _cShown.Count > 0)
+        {
+            message = _cDetail[_cShown[_completionSelected]];
+            color = InfoColor;
+        }
+        else if (_statusTicks == 0 && live >= 0)
+        {
+            message = _pText[live];
+            color = _pError[live] ? ErrorColor : WarningColor;
+        }
+        else if (_statusTicks == 0)
+        {
+            message = ProblemTextAt(_doc.Line);
+            color = ProblemAt(_doc.Line) == 0 ? ErrorColor : WarningColor;
+        }
         int x = 2 + ((name.Length + 2) * CharWidth);
         int room = ((Screen - (position.Length * CharWidth) - 6) - x) / CharWidth;
         if (message.Length > 0 && room > 3)
@@ -1468,6 +1961,28 @@ public sealed class Editor : ICartridge
     private static bool Ctrl() => Input.IsKeyDown(Key.LeftControl) || Input.IsKeyDown(Key.RightControl);
 
     private static bool Shift() => Input.IsKeyDown(Key.LeftShift) || Input.IsKeyDown(Key.RightShift);
+
+    private static bool IsDigitChar(char c) => c >= '0' && c <= '9';
+
+    // Length of the identifier that ends at the cursor.
+    private int WordLengthBeforeCursor()
+    {
+        string line = _doc.Lines[_doc.Line];
+        int i = _doc.Column;
+        while (i > 0 && IsWord(line[i - 1]))
+        {
+            i--;
+        }
+
+        return _doc.Column - i;
+    }
+
+    // First character of the identifier that ends at the cursor (' ' if none).
+    private char WordStartChar()
+    {
+        int length = WordLengthBeforeCursor();
+        return length == 0 ? ' ' : _doc.Lines[_doc.Line][_doc.Column - length];
+    }
 
     private static bool IsWord(char c) => (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
 

@@ -57,6 +57,7 @@ internal sealed unsafe class SdlHost : IDisposable
         CreateWindowAndRenderer();
         _environment = environment;
         environment.Clipboard = new SdlClipboard();
+        environment.CodeAnalysis = new HostCodeAnalysis();
         environment.AppFailed += (app, message) => Console.Error.WriteLine($"ZTX16: {app.Name} failed: {message}");
         environment.Start();
         // The environment opens in the code editor (it reopens the last file, or the Hello World project);

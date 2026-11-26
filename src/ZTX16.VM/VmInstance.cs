@@ -927,6 +927,15 @@ public sealed class VmInstance : ISyscallContext
     }
 
     /// <inheritdoc />
+    long ISyscallContext.NewInt32Array(int[] value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        var array = new ArrayObject(VmArrayKind.Bits32, value.Length);
+        value.CopyTo((int[])array.Data, 0);
+        return Allocate(array, _syscallFunction ?? _functions[0], _syscallOffset);
+    }
+
+    /// <inheritdoc />
     long ISyscallContext.NewByteArray(byte[] value)
     {
         ArgumentNullException.ThrowIfNull(value);

@@ -92,6 +92,7 @@ internal sealed class EnvironmentDriver : IDisposable
         Workspace = new Workspace(Path.Combine(_root.Path, "workspace"));
         Environment = new AppEnvironment(Workspace, new Tools(), ["code", "console"],
             name => Load(name == "code" ? CodeCartridge.Value : ConsoleCartridge.Value), path => Load(File.ReadAllBytes(path)), 48000);
+        Environment.CodeAnalysis = new TestCodeAnalysis();
         Environment.Start();
     }
 
@@ -159,6 +160,40 @@ internal sealed class EnvironmentDriver : IDisposable
         input.Enqueue(InputEvent.KeyChange(Key.LeftControl, false));
         input.Enqueue(InputEvent.KeyChange(Key.LeftShift, false));
         Tick();
+    }
+
+    /// <summary>Ticks (letting background work finish) until <paramref name="done"/> holds; false on timeout.</summary>
+    public bool TickUntil(Func<bool> done, int maxTicks = 400)
+    {
+        for (int i = 0; i < maxTicks; i++)
+        {
+            if (done())
+            {
+                return true;
+            }
+
+            Thread.Sleep(5);
+            Tick();
+        }
+
+        return done();
+    }
+
+    private sealed class TestCodeAnalysis : ICodeAnalysis
+    {
+        public CodeAnalysisInfo Analyze(string projectDirectory, string file, string text)
+        {
+            CodeAnalysisResult r = CodeIntelligence.Analyze(projectDirectory, file, text, ProjectFixtures.CoreDirectory);
+            return new CodeAnalysisInfo(
+                r.Problems.Select(p => new CodeProblemInfo(p.Line, p.Column, p.EndLine, p.EndColumn, p.IsError, p.Id, p.Message)).ToList(),
+                r.Colors.Select(c => new CodeColorInfo(c.Line, c.Column, c.Length, (int)c.Kind)).ToList());
+        }
+
+        public CodeCompletionInfo Complete(string projectDirectory, string file, string text, int line, int column)
+        {
+            CodeCompletionResult r = CodeIntelligence.Complete(projectDirectory, file, text, line, column, ProjectFixtures.CoreDirectory);
+            return new CodeCompletionInfo(r.StartColumn, r.Items.Select(i => new CodeCompletionEntry(i.Label, (int)i.Kind, i.Detail)).ToList());
+        }
     }
 
     public void Dispose()
@@ -437,5 +472,84 @@ public class AppSwitchingTests
         byte[] data = editor.Session.Storage.Read("session", "last-file")!;
         int length = BitConverter.ToInt32(data, 0);
         return System.Text.Encoding.Unicode.GetString(data, 4, length * 2);
+    }
+}
+
+public class LiveCodeTests
+{
+    private static EnvironmentDriver Start()
+    {
+        var env = new EnvironmentDriver();
+        env.Type("new Game");
+        env.Type("edit /Game/code/Game.cs");
+        return env;
+    }
+
+    private static int Pixel(EnvironmentDriver env, int x, int y) => env.Active.Session.Graphics.Layers[0].GetPixel(x, y);
+
+    // The completion popup draws a frame (colour 20) somewhere in the editor area.
+    private static bool PopupVisible(EnvironmentDriver env)
+    {
+        // The selected row: a long run of the selection colour (26) inside the editor area.
+        for (int y = 12; y < 240; y++)
+        {
+            int run = 0;
+            for (int x = 18; x < 256; x++)
+            {
+                run = Pixel(env, x, y) == 26 ? run + 1 : 0;
+                if (run > 100)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+    private static string Line(EnvironmentDriver env, int index) =>
+        env.Workspace.ReadText("/Game/code/Game.cs")!.Replace("\r", "").Split('\n')[index];
+
+    [Fact]
+    public void ErrorsAreMarkedWhileTypingWithoutCompiling()
+    {
+        using EnvironmentDriver env = Start();
+        env.Text("x");                                     // "xusing ZTX16;" is not C#
+        Assert.True(env.TickUntil(() => Pixel(env, 13, 240) == 7), "line 1 should turn red");
+        env.Press(Key.Backspace);
+        Assert.True(env.TickUntil(() => Pixel(env, 13, 240) != 7), "the error should go away");
+    }
+
+    [Fact]
+    public void NamesAreColouredByWhatTheyAre()
+    {
+        using EnvironmentDriver env = Start();
+        // Line 14 is "        Graphics.UsePalette(...)": the G of Graphics, lexically plain (4), becomes a type (17).
+        Assert.Equal(4, Pixel(env, 51, 149));
+        Assert.True(env.TickUntil(() => Pixel(env, 51, 149) == 17), "Graphics should be coloured as a type");
+    }
+
+    [Fact]
+    public void CompletionAfterADotFiltersAndInserts()
+    {
+        using EnvironmentDriver env = Start();
+        env.Press(Key.Down);                                // line 2 (empty)
+        env.Text("Graphics.");
+        env.Text("FillR");                                 // Graphics has Fill and FillRect
+        Assert.True(env.TickUntil(() => PopupVisible(env)), "the completion popup should open");
+        env.Press(Key.Enter);                               // accept the selected proposal
+        env.Press(Key.S, ctrl: true);
+        Assert.Equal("Graphics.FillRect", Line(env, 1));
+    }
+
+    [Fact]
+    public void CompletionOfANameInScope()
+    {
+        using EnvironmentDriver env = Start();
+        env.Press(Key.Down);
+        env.Text("Inp");
+        Assert.True(env.TickUntil(() => PopupVisible(env)), "the completion popup should open");
+        env.Press(Key.Tab);                                 // Tab accepts too
+        env.Press(Key.S, ctrl: true);
+        Assert.Equal("Input", Line(env, 1));
     }
 }

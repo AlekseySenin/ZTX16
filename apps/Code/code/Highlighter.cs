@@ -81,7 +81,7 @@ public sealed class Highlighter
         for (int i = _spanText.Count; i < lines.Count; i++)
         {
             bool inBlock = i > 0 && _blockAtEnd[i - 1];
-            _blockAtEnd.Add(Split(lines[i], inBlock));
+            _blockAtEnd.Add(Split(lines[i], inBlock, i));
             int count = _starts.Count;
             string[] texts = new string[count];
             int[] starts = new int[count];
@@ -107,8 +107,72 @@ public sealed class Highlighter
 
     public int[] SpanColors(int line) => _spanColor[line];
 
+    // Name kinds from live analysis: (line * 4096 + column) → colour, for identifiers only.
+    private readonly Dictionary<int, int> _semantic = new();
+
+    public const int MethodColor = 12;
+    public const int LocalColor = 28;
+    public const int ConstantColor = 23;
+
+    /// <summary>
+    /// Takes the name kinds of the last analysis — (line, column, length, kind) quadruples — and recolours the
+    /// whole document with them on the next update.
+    /// </summary>
+    public void SetSemantic(int[] packed, Document document)
+    {
+        _semantic.Clear();
+        for (int i = 0; i + 3 < packed.Length; i += 4)
+        {
+            int color = KindColor(packed[i + 3]);
+            if (color != Plain && packed[i + 1] < 4096)
+            {
+                _semantic[(packed[i] * 4096) + packed[i + 1]] = color;
+            }
+        }
+
+        document.DirtyFrom = 0;
+    }
+
+    /// <summary>Forgets the name kinds (another file was opened).</summary>
+    public void ClearSemantic(Document document)
+    {
+        _semantic.Clear();
+        document.DirtyFrom = 0;
+    }
+
+    /// <summary>The colour of a name kind (see the CodeAnalysis kinds).</summary>
+    public static int KindColor(int kind)
+    {
+        if (kind == 1)
+        {
+            return TypeName;
+        }
+
+        if (kind == 2)
+        {
+            return MethodColor;
+        }
+
+        if (kind == 5 || kind == 6)
+        {
+            return LocalColor;
+        }
+
+        if (kind == 8 || kind == 11)
+        {
+            return ConstantColor;
+        }
+
+        if (kind == 10)
+        {
+            return Keyword;
+        }
+
+        return Plain;
+    }
+
     // Splits one line into spans; returns whether a block comment is still open at its end.
-    private bool Split(string line, bool inBlock)
+    private bool Split(string line, bool inBlock, int lineIndex)
     {
         _starts.Clear();
         _lengths.Clear();
@@ -237,7 +301,8 @@ public sealed class Highlighter
 
                 string word = Strings.Sub(line, start, i - start);
                 int color;
-                Add(start, i - start, _words.TryGetValue(word, out color) ? color : Plain);
+                int semantic;
+                Add(start, i - start, _words.TryGetValue(word, out color) ? color : _semantic.TryGetValue((lineIndex * 4096) + start, out semantic) ? semantic : Plain);
                 continue;
             }
 

@@ -30,6 +30,9 @@ public interface ISyscallContext
 
     /// <summary>Allocates a <c>byte[]</c> on the VM heap with a copy of <paramref name="value"/>, for use as a result.</summary>
     long NewByteArray(byte[] value);
+
+    /// <summary>Allocates an <c>int[]</c> on the VM heap with a copy of <paramref name="value"/>, for use as a result.</summary>
+    long NewInt32Array(int[] value);
 }
 
 /// <summary>Thrown when a module imports a syscall the runtime does not provide.</summary>

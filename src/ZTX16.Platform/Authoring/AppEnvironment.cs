@@ -127,6 +127,9 @@ public sealed class AppEnvironment
     /// <summary>Names of the available system apps.</summary>
     public IReadOnlyList<string> SystemApps { get; }
 
+    /// <summary>Live code analysis for the code editor, or null if the host has none.</summary>
+    public ICodeAnalysis? CodeAnalysis { get; set; }
+
     /// <summary>The clipboard system apps read and write (in memory unless the host provides its own).</summary>
     public IClipboard Clipboard { get; set; } = new MemoryClipboard();
 
@@ -364,6 +367,16 @@ public sealed class AuthoringContext
 
     /// <summary>Output of the last project build (summary or errors).</summary>
     internal string LastOutput { get; set; } = string.Empty;
+
+    /// <summary>Running live analysis, and the last finished one.</summary>
+    internal Task<CodeAnalysisInfo>? AnalysisTask { get; set; }
+
+    internal CodeAnalysisInfo? Analysis { get; set; }
+
+    /// <summary>Running completion request, and the last finished one.</summary>
+    internal Task<CodeCompletionInfo>? CompletionTask { get; set; }
+
+    internal CodeCompletionInfo? Completion { get; set; }
 
     /// <summary>Virtual path of the last built cartridge.</summary>
     internal string LastCartridge { get; set; } = string.Empty;

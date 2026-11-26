@@ -135,3 +135,38 @@ public static class Apps
     [Syscall("apps.version")]
     public static string Version() => throw new NotInVmException();
 }
+
+/// <summary>
+/// Live code analysis for the code editor. Requests run in the background: start one, then poll until it is
+/// ready (a new request is refused while one runs). Lines and columns are 0-based.
+/// </summary>
+public static class CodeAnalysis
+{
+    /// <summary>Starts analysing a workspace file of a project with the given (unsaved) text. False if busy or not in a project.</summary>
+    [Syscall("code.analyze")]
+    public static bool Analyze(string path, string text) => throw new NotInVmException();
+
+    /// <summary>True once when the running analysis has finished; its results are then available.</summary>
+    [Syscall("code.analysis_ready")]
+    public static bool AnalysisReady() => throw new NotInVmException();
+
+    /// <summary>Problems of the last analysis, one per line: <c>E|W, line, column, end line, end column, id, message</c> separated by tabs.</summary>
+    [Syscall("code.problems")]
+    public static string Problems() => throw new NotInVmException();
+
+    /// <summary>Names of the last analysis as (line, column, length, kind) quadruples. Kinds: 1 type, 2 method, 3 property, 4 field, 5 local, 6 parameter, 7 namespace, 8 enum member, 9 event, 11 constant.</summary>
+    [Syscall("code.colors")]
+    public static int[] Colors() => throw new NotInVmException();
+
+    /// <summary>Starts a completion request at a position. False if busy or not in a project.</summary>
+    [Syscall("code.complete")]
+    public static bool Complete(string path, string text, int line, int column) => throw new NotInVmException();
+
+    /// <summary>True once when the running completion request has finished.</summary>
+    [Syscall("code.completion_ready")]
+    public static bool CompletionReady() => throw new NotInVmException();
+
+    /// <summary>The last completion: first line the start column of the word, then one item per line: <c>kind, label, detail</c> separated by tabs (kind 10 = keyword).</summary>
+    [Syscall("code.completion")]
+    public static string Completion() => throw new NotInVmException();
+}

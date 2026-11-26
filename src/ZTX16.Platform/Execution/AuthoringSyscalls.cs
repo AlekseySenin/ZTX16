@@ -13,7 +13,7 @@ namespace ZTX16.Platform.Execution;
 internal static class AuthoringSyscalls
 {
     /// <summary>Name prefixes of the authoring syscalls.</summary>
-    public static readonly string[] Prefixes = ["workspace.", "projects.", "apps."];
+    public static readonly string[] Prefixes = ["workspace.", "projects.", "apps.", "code."];
 
     /// <summary>True if <paramref name="name"/> is an authoring syscall.</summary>
     public static bool IsAuthoring(string name) => Prefixes.Any(name.StartsWith);
@@ -103,6 +103,95 @@ internal static class AuthoringSyscalls
         bind("apps.get_clipboard", (c, _) => c.NewString(Env().Clipboard.GetText()));
         bind("apps.set_clipboard", (c, a) => { Env().Clipboard.SetText(Text(c, a[0])); return 0; });
         bind("apps.version", (c, _) => c.NewString("ZTX16 " + (typeof(AppEnvironment).Assembly.GetName().Version?.ToString(3) ?? "0.0.0")));
+
+        // Live code analysis (code editor): requests run on a worker thread; the app polls for the result.
+        bind("code.analyze", (c, a) =>
+        {
+            string text = Text(c, a[1]);
+            if (Env().CodeAnalysis is not { } analysis || context!.AnalysisTask is { IsCompleted: false } || ProjectFile(Text(c, a[0])) is not var (dir, file))
+            {
+                return 0;
+            }
+
+            context.AnalysisTask = Task.Run(() => analysis.Analyze(dir, file, text));
+            return 1;
+        });
+        bind("code.analysis_ready", (_, _) =>
+        {
+            if (context!.AnalysisTask is not { IsCompleted: true } task)
+            {
+                return 0;
+            }
+
+            context.Analysis = task.IsCompletedSuccessfully ? task.Result : new CodeAnalysisInfo([], []);
+            context.AnalysisTask = null;
+            return 1;
+        });
+        bind("code.problems", (c, _) => c.NewString(string.Join("\n", (context!.Analysis?.Problems ?? []).Select(p =>
+            $"{(p.IsError ? 'E' : 'W')}\t{p.Line}\t{p.Column}\t{p.EndLine}\t{p.EndColumn}\t{p.Id}\t{p.Message.Replace('\n', ' ').Replace('\t', ' ')}"))));
+        bind("code.colors", (c, _) =>
+        {
+            IReadOnlyList<CodeColorInfo> colors = context!.Analysis?.Colors ?? [];
+            int[] packed = new int[colors.Count * 4];
+            for (int i = 0; i < colors.Count; i++)
+            {
+                (packed[i * 4], packed[(i * 4) + 1], packed[(i * 4) + 2], packed[(i * 4) + 3]) = (colors[i].Line, colors[i].Column, colors[i].Length, colors[i].Kind);
+            }
+
+            return c.NewInt32Array(packed);
+        });
+        bind("code.complete", (c, a) =>
+        {
+            string text = Text(c, a[1]);
+            int line = ToI32(a[2]), column = ToI32(a[3]);
+            if (Env().CodeAnalysis is not { } analysis || context!.CompletionTask is { IsCompleted: false } || ProjectFile(Text(c, a[0])) is not var (dir, file))
+            {
+                return 0;
+            }
+
+            context.CompletionTask = Task.Run(() => analysis.Complete(dir, file, text, line, column));
+            return 1;
+        });
+        bind("code.completion_ready", (_, _) =>
+        {
+            if (context!.CompletionTask is not { IsCompleted: true } task)
+            {
+                return 0;
+            }
+
+            context.Completion = task.IsCompletedSuccessfully ? task.Result : new CodeCompletionInfo(0, []);
+            context.CompletionTask = null;
+            return 1;
+        });
+        bind("code.completion", (c, _) =>
+        {
+            CodeCompletionInfo? completion = context!.Completion;
+            if (completion is null)
+            {
+                return c.NewString("");
+            }
+
+            IEnumerable<string> items = completion.Items.Select(i => $"{i.Kind}\t{i.Label}\t{i.Detail.Replace('\n', ' ').Replace('\t', ' ')}");
+            return c.NewString(string.Join("\n", items.Prepend(completion.StartColumn.ToString(System.Globalization.CultureInfo.InvariantCulture))));
+        });
+
+        // (project directory, project-relative file) of a workspace file, or null if it is not in a project.
+        (string Directory, string File)? ProjectFile(string path)
+        {
+            string? full = Ws().Resolve(path, out _);
+            string? dir = full is null ? null : System.IO.Path.GetDirectoryName(full);
+            while (dir is not null && dir.Length >= Ws().Root.Length)
+            {
+                if (Env().Tools.IsProject(dir))
+                {
+                    return (dir, System.IO.Path.GetRelativePath(dir, full!).Replace('\\', '/'));
+                }
+
+                dir = System.IO.Path.GetDirectoryName(dir);
+            }
+
+            return null;
+        }
 
         bool Build(string path)
         {

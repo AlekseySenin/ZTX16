@@ -645,3 +645,27 @@ structs, which the VM does not support; C# 12 uses arrays.
   embedded apps run. When the toolchain files are not next to the executable, they are unpacked once per host
   build into `%LOCALAPPDATA%/ZTX16/toolchain/<module id>/`. `tools/publish.ps1` now produces just `ZTX16.exe`
   (~52 MB) plus `cartridges/`.
+
+## Editors-3 — completion, semantic colours and live errors
+
+- `ZTX16.Toolchain.CodeIntelligence` (Roslyn): for a project file and the editor's unsaved text it builds the
+  same compilation as a build (other files and the core library cached, only the edited file re-parsed) and
+  answers: **diagnostics** of that file (`SemanticModel.GetDiagnostics`: errors and warnings; whole-compilation
+  warnings such as unused fields appear only in a real build), **name kinds** for every identifier (type, method,
+  property, field, local, parameter, namespace, enum member, event, constant) and **completion** at a position:
+  after `.` the members of the namespace, type (static) or expression type (instance, extension methods);
+  otherwise the symbols in scope (BCL namespaces/types outside `ZTX16` hidden) plus C# keywords; nothing inside
+  comments and strings. `object`/`ValueType`/`Enum` members are hidden; overloads collapse into one item.
+- Platform: `ICodeAnalysis` (host implementation in `HostCodeAnalysis`); authoring syscalls `code.analyze` /
+  `code.analysis_ready` / `code.problems` / `code.colors` (an `int[]`) and `code.complete` / `code.completion_ready`
+  / `code.completion`. Requests run with `Task.Run`; the app polls, so the editor never waits; one request of each
+  kind at a time. `ISyscallContext.NewInt32Array`.
+- Code editor: ~0.3 s (18 ticks) after the last change the text is analysed; results recolour names (types cyan,
+  methods yellow, locals/parameters ice, enum members/constants lavender) and draw dotted underlines under the
+  exact problem ranges (errors red over warnings yellow); problem lines are coloured in the gutter, the message
+  under the cursor shows in the status bar, which also counts live errors and warnings (`1E 0W`).
+- Completion popup: opens after `.`, while typing an identifier, or with Ctrl+Space; filters as you type
+  (prefix matches first, then substring matches); Up/Down/PgUp/PgDn choose, Enter or Tab inserts, Esc closes
+  (and suppresses the automatic popup until the word ends); the selected item's signature shows in the status
+  bar; items carry a kind letter (T type, M method, P property, F field, L local, A parameter, N namespace,
+  E enum member, V event, K keyword, C constant).

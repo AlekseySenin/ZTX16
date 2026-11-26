@@ -108,7 +108,23 @@ public static class ProjectBuilder
         return stream.ToArray();
     }
 
-    private static MetadataReference[] References()
+    /// <summary>The compilation options of cartridge code (shared with <see cref="CodeIntelligence"/>).</summary>
+    internal static CSharpCompilationOptions CompilationOptions { get; } = new(
+        OutputKind.DynamicallyLinkedLibrary,
+        optimizationLevel: OptimizationLevel.Release,
+        nullableContextOptions: NullableContextOptions.Enable,
+        deterministic: true);
+
+    /// <summary>The parse options of cartridge code.</summary>
+    internal static CSharpParseOptions ParseOptions => new(CSharpVersion);
+
+    /// <summary>The core library source files compiled into every cartridge, in a stable order.</summary>
+    internal static IEnumerable<string> CoreFiles(string coreDirectory) =>
+        Directory.EnumerateFiles(coreDirectory, "*.cs", SearchOption.AllDirectories)
+            .Where(p => !Path.GetRelativePath(coreDirectory, p).Replace('\\', '/').Split('/').Any(part => part is "bin" or "obj"))
+            .Order(StringComparer.Ordinal);
+
+    internal static MetadataReference[] References()
     {
         // In a single-file host the bundled assemblies have no location; tools/publish.ps1 then ships copies in ref/.
         string refDirectory = ReferenceDirectory ?? Path.Combine(AppContext.BaseDirectory, "ref");

@@ -46,6 +46,9 @@ public sealed class Document
     /// <summary>True if the text changed since it was loaded or saved.</summary>
     public bool Modified { get; set; }
 
+    /// <summary>Increases with every change of the text (for live analysis).</summary>
+    public int Revision { get; private set; }
+
     /// <summary>First line whose highlighting is out of date (int.MaxValue if none). The highlighter resets it.</summary>
     public int DirtyFrom { get; set; }
 
@@ -64,6 +67,7 @@ public sealed class Document
         HasSelection = false;
         Modified = false;
         DirtyFrom = 0;
+        Revision++;
         _undoText.Clear();
         _undoLine.Clear();
         _undoColumn.Clear();
@@ -414,6 +418,7 @@ public sealed class Document
         Column = Clamp(column, 0, Lines[Line].Length);
         Modified = true;
         DirtyFrom = 0;
+        Revision++;
         _typing = false;
     }
 
@@ -489,6 +494,7 @@ public sealed class Document
     private void Changed(int fromLine)
     {
         Modified = true;
+        Revision++;
         if (fromLine < DirtyFrom)
         {
             DirtyFrom = fromLine;
