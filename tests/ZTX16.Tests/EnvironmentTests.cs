@@ -386,3 +386,56 @@ public class CodeEditorTests
         Assert.Equal("// fresh file", env.Workspace.ReadText("/Game/code/Fresh.cs"));
     }
 }
+
+public class AppSwitchingTests
+{
+    [Fact]
+    public void F1AndF2SwitchBetweenConsoleAndEditorAndStopAGame()
+    {
+        using var env = new EnvironmentDriver();
+        env.Type("new Game");
+        Assert.True(env.Environment.SwitchTo("code"));      // F2
+        env.Environment.AfterTick();
+        Assert.Equal("code", env.Active.Name);
+
+        env.Environment.SwitchTo("console");                // F1
+        env.Environment.AfterTick();
+        Assert.Equal("console", env.Active.Name);
+
+        env.Type("run Game");
+        Assert.False(env.Active.IsSystem);
+        env.Environment.SwitchTo("code");                   // F2 from a running game stops it
+        env.Environment.AfterTick();
+        Assert.Equal("code", env.Active.Name);
+        Assert.False(env.Environment.SwitchTo("nonexistent"));
+    }
+
+    [Fact]
+    public void EditorOpensHelloWorldThenRemembersTheLastFile()
+    {
+        using var env = new EnvironmentDriver();
+        env.Type("new HelloWorld");
+        env.Workspace.WriteText("/HelloWorld/code/Extra.cs", "// extra");
+        env.Environment.SwitchTo("code");
+        env.Environment.AfterTick();
+        env.Tick();
+
+        // It opened /HelloWorld/code/Game.cs: typing and saving changes that file.
+        env.Text("// hi");
+        env.Press(Key.S, ctrl: true);
+        Assert.StartsWith("// hi", env.Workspace.ReadText("/HelloWorld/code/Game.cs"));
+
+        env.Press(Key.Escape);
+        env.Type("edit /HelloWorld/code/Extra.cs");
+        Assert.Equal("code", env.Active.Name);
+        AppSession editor = env.Active;
+        Assert.Equal("/HelloWorld/code/Extra.cs", LastFile(editor));   // the next session reopens it
+    }
+
+    private static string LastFile(AppSession editor)
+    {
+        byte[] data = editor.Session.Storage.Read("session", "last-file")!;
+        int length = BitConverter.ToInt32(data, 0);
+        return System.Text.Encoding.Unicode.GetString(data, 4, length * 2);
+    }
+}

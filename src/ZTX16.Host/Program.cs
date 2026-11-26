@@ -123,13 +123,20 @@ static int RunEnvironment(HostOptions options, string systemDirectory)
 
     try
     {
-        var environment = new AppEnvironment(new Workspace(workspaceRoot), new HostProjectTools(), apps,
+        // First start: an empty workspace receives the Hello World project, which the code editor opens.
+        var workspace = new Workspace(workspaceRoot);
+        if (string.IsNullOrEmpty(workspace.List("/")))
+        {
+            ZTX16.Toolchain.ProjectTools.Create(Path.Combine(workspace.Root, "HelloWorld"), "Hello World", "dev.local.helloworld");
+        }
+
+        var environment = new AppEnvironment(workspace, new HostProjectTools(), apps,
             name => Load(Path.Combine(systemDirectory, name + CartridgeFile.Extension)), Load, SdlHost.SampleRate);
         using var host = new SdlHost(options, "ZTX16");
         return host.RunEnvironment(environment, options.Edit);
     }
     catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidOperationException or VmTrapException
-        or LinkException or CartridgeFormatException or ExecutableFormatException or VerificationException)
+        or LinkException or CartridgeFormatException or ExecutableFormatException or VerificationException or ProjectException)
     {
         HostShell.Error(e.Message);
         return 1;

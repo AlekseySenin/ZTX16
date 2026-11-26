@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using SDL;
 using ZTX16.Platform.Graphics;
+using ZTX16.Platform.Authoring;
 using ZTX16.Platform.Runtime;
 using static SDL.SDL3;
 
@@ -58,9 +59,11 @@ internal sealed unsafe class SdlHost : IDisposable
         environment.Clipboard = new SdlClipboard();
         environment.AppFailed += (app, message) => Console.Error.WriteLine($"ZTX16: {app.Name} failed: {message}");
         environment.Start();
-        if (edit is not null && environment.Active is { } shell)
+        // The environment opens in the code editor (it reopens the last file, or the Hello World project);
+        // F1 switches to the Console, F2 back to the editor.
+        if (environment.Active is { } shell && environment.SystemApps.Contains("code"))
         {
-            environment.Launch(shell, "code", edit);
+            environment.Launch(shell, "code", edit ?? string.Empty);
             environment.AfterTick();
         }
 
@@ -320,8 +323,14 @@ internal sealed unsafe class SdlHost : IDisposable
                 SDL_SetWindowFullscreen(_window, _fullscreen);
                 return true;
 
+            case SDL_Scancode.SDL_SCANCODE_F1 when _environment is not null:
             case SDL_Scancode.SDL_SCANCODE_F12 when _environment is not null:
-                _environment.ReturnToShell();
+                _environment.SwitchTo(AppEnvironment.ShellApp);
+                _environment.AfterTick();
+                return true;
+
+            case SDL_Scancode.SDL_SCANCODE_F2 when _environment is not null:
+                _environment.SwitchTo("code");
                 _environment.AfterTick();
                 return true;
 

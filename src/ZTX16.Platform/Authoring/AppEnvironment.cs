@@ -203,14 +203,26 @@ public sealed class AppEnvironment
     public void Back(AppSession app) => _next = app.Launcher ?? Shell ?? app;
 
     /// <summary>Host shortcut: return to the shell; a running user cartridge is stopped.</summary>
-    public void ReturnToShell()
+    public void ReturnToShell() => SwitchTo(ShellApp);
+
+    /// <summary>
+    /// Host shortcut (F1 Console, F2 code editor): switch to a system app, starting it if needed. A running user
+    /// cartridge is stopped. False if there is no such app.
+    /// </summary>
+    public bool SwitchTo(string app)
     {
+        if (!SystemApps.Contains(app, StringComparer.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
         if (Active is not null && !Active.IsSystem)
         {
             CloseUser();
         }
 
-        _next = Shell;
+        _next = _system.TryGetValue(app, out AppSession? running) ? running : StartSystem(app, Shell);
+        return true;
     }
 
     /// <summary>

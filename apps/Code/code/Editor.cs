@@ -11,7 +11,7 @@ namespace ZTX16Code;
 /// <remarks>
 /// Keys: Ctrl+O explorer, Ctrl+S save, Ctrl+Shift+S save as, Ctrl+N new, F6 compile, F5 compile and run,
 /// Ctrl+L log, Ctrl+F find (F3 next), Ctrl+Z/Ctrl+Y undo/redo, Ctrl+A/C/X/V, Tab/Shift+Tab indent,
-/// Esc closes a panel or returns to the Console.
+/// Esc closes a panel or returns to the Console. Host keys: F1 Console, F2 this editor.
 /// </remarks>
 public sealed class Editor : ICartridge
 {
@@ -105,7 +105,30 @@ public sealed class Editor : ICartridge
             x += _buttonWidth[i] + 2;
         }
 
-        SetStatus("Ctrl+O open  F6 compile  F5 run  Esc console", InfoColor);
+        // Reopen the file of the last session, or the Hello World project of a new workspace.
+        byte[]? last = Storage.Read("session", "last-file");
+        string path = last is null ? "" : new ByteReader(last).ReadString() ?? "";
+        if (path.Length == 0 || !Workspace.Exists(path))
+        {
+            path = DefaultFile;
+        }
+
+        if (Workspace.Exists(path))
+        {
+            OpenFile(path);
+        }
+
+        SetStatus("F1 console  F5 run  F6 compile  Ctrl+O open", InfoColor);
+    }
+
+    private const string DefaultFile = "/HelloWorld/code/Game.cs";
+
+    // Remembered so the next session reopens it.
+    private void RememberFile()
+    {
+        var writer = new ByteWriter();
+        writer.WriteString(_path);
+        Storage.Write("session", "last-file", writer.ToArray());
     }
 
     // ---- tick ---------------------------------------------------------------------------------------------
@@ -587,6 +610,7 @@ public sealed class Editor : ICartridge
         _scrollTop = 0;
         _scrollLeft = 0;
         _explorerDir = Parent(path);
+        RememberFile();
     }
 
     private void GoTo(int line, int column)
@@ -636,6 +660,7 @@ public sealed class Editor : ICartridge
 
         _doc.Modified = false;
         SetStatus("Saved " + FileName(_path), InfoColor);
+        RememberFile();
         return true;
     }
 

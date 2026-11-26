@@ -305,6 +305,7 @@ public class BuildAndExtractTests
         var session = new RuntimeSession(VmProgram.Load(built.Executable), 48000, new ResourceStore(built.Resources));
         session.Initialize();
         session.RunTick(TimeSpan.Zero);
-        Assert.Equal(11, session.Graphics.Layers[1].GetPixel(120, 120));
+        Assert.Equal(11, session.Graphics.Layers[1].GetPixel(120, 100));    // the square
+        Assert.Contains(Enumerable.Range(80, 96), x => session.Graphics.Layers[1].GetPixel(x, 203) == 11);   // "HELLO WORLD!"
     }
 }

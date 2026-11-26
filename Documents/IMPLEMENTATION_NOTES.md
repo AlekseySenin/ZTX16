@@ -631,3 +631,11 @@ structs, which the VM does not support; C# 12 uses arrays.
   of the error report); `string.substring` / `string.index_of` syscalls make `Strings.Sub`/`IndexOf` single
   allocations; the host clipboard for system apps (`Apps.GetClipboard`/`SetClipboard`, `IClipboard`, SDL in the
   host, in-memory otherwise); the build output shows workspace paths instead of host paths.
+- Boot and switching (follow-up): the environment opens in the code editor, which reopens the last file of the
+  previous session (kept in its Storage) or `/HelloWorld/code/Game.cs`; a new, empty workspace receives the
+  Hello World project on the first start. Host keys **F1** = Console, **F2** = code editor (`AppEnvironment.SwitchTo`;
+  a running cartridge is stopped; F12 still returns to the Console). The standard project template is now the
+  Hello World cartridge (text, a square moved with the arrows, Escape exits).
+- `tools/publish.ps1` refuses to start (changing nothing) while `dist/ZTX16/ZTX16.exe` is running; before, a
+  locked executable left `dist` without its `system/`, `core/` and `ref/` folders, so the exe fell back to the file
+  picker.

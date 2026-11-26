@@ -91,11 +91,14 @@ namespace ZTX16.Toolchain
         public const string GameSource = """
             using ZTX16;
 
-            /// <summary>The cartridge: created once, then Tick and Render run 60 times per second.</summary>
+            /// <summary>
+            /// Hello World! The cartridge is created once, then Tick and Render run 60 times per second.
+            /// Arrow keys move the square, Escape exits.
+            /// </summary>
             public sealed class Game : ICartridge
             {
                 private int x = 120;
-                private int y = 120;
+                private int y = 100;
 
                 public void Initialize()
                 {
@@ -115,6 +118,8 @@ namespace ZTX16.Toolchain
                 public void Render()
                 {
                     Graphics.Clear(1);
+                    Text.Draw(1, "HELLO WORLD!", 80, 200, 11, "");
+                    Text.Draw(1, "Arrows move  Esc exits", 40, 20, 4, "");
                     Graphics.FillRect(1, x, y, 16, 16, 11);
                 }
             }

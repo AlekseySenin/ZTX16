@@ -18,6 +18,13 @@ $env:PATH = (Split-Path $dotnet) + [IO.Path]::PathSeparator + $env:PATH
 $root = Split-Path -Parent $PSScriptRoot
 $out = Join-Path $root "dist/ZTX16"
 
+# Refuse before touching anything if a previous ZTX16.exe is still running (it would be half deleted).
+$exe = Join-Path $out "ZTX16.exe"
+if (Test-Path $exe) {
+    try { [IO.File]::Open($exe, 'Open', 'ReadWrite', 'None').Close() }
+    catch { throw "dist/ZTX16/ZTX16.exe is in use: close ZTX16 and run this script again. Nothing was changed." }
+}
+
 if (Test-Path $out) { Remove-Item -Recurse -Force $out }
 New-Item -ItemType Directory -Force (Join-Path $out "cartridges"), (Join-Path $out "system"), (Join-Path $out "ref") | Out-Null
 
