@@ -44,7 +44,7 @@ A cartridge is one class implementing `ZTX16.ICartridge` (`Initialize`, `Tick`, 
 powershell -ExecutionPolicy Bypass -File tools/publish.ps1
 ```
 
-This produces `dist/ZTX16/ZTX16.exe` — one self-contained file (the .NET runtime and SDL3 inside, nothing to install) — and `dist/ZTX16/cartridges/` with the sample cartridges. Copy the folder anywhere. Then:
+This produces `dist/ZTX16/ZTX16.exe` — one self-contained file with everything inside (the .NET runtime, SDL3, the Console, the code editor and the cartridge compiler; nothing to install) — and `dist/ZTX16/cartridges/` with the sample cartridges. The exe works on its own: copy it anywhere. Then:
 
 - **double-click `ZTX16.exe`**: boots into the code editor with your last file (on the first start: a new Hello World project); **F1** switches to the Console (type HELP), **F2** back to the editor; create, build and run projects in your workspace (`Documents\ZTX16`); F12 returns from a running game;
 - **drag a `.ztx` onto `ZTX16.exe`**, or use **Open with → ZTX16.exe** on a `.ztx` file (tick "always" to make `.ztx` files open with a double-click);

@@ -26,7 +26,16 @@ public static class ProjectBuilder
     public const LanguageVersion CSharpVersion = LanguageVersion.CSharp12;
 
     /// <summary>Directory containing the core library sources shipped with the toolchain.</summary>
-    public static string DefaultCoreDirectory => Path.Combine(AppContext.BaseDirectory, "core");
+    public static string DefaultCoreDirectory => CoreDirectoryOverride ?? Path.Combine(AppContext.BaseDirectory, "core");
+
+    /// <summary>Where the core library sources are, when not next to the toolchain (a host that unpacks them).</summary>
+    public static string? CoreDirectoryOverride { get; set; }
+
+    /// <summary>
+    /// A directory of reference assemblies to compile against instead of the running runtime's (a single-file host
+    /// whose assemblies have no location unpacks them here).
+    /// </summary>
+    public static string? ReferenceDirectory { get; set; }
 
     /// <summary>Builds the project at <paramref name="projectRoot"/>.</summary>
     /// <exception cref="ProjectException">The project or a resource file is invalid.</exception>
@@ -102,7 +111,7 @@ public static class ProjectBuilder
     private static MetadataReference[] References()
     {
         // In a single-file host the bundled assemblies have no location; tools/publish.ps1 then ships copies in ref/.
-        string refDirectory = Path.Combine(AppContext.BaseDirectory, "ref");
+        string refDirectory = ReferenceDirectory ?? Path.Combine(AppContext.BaseDirectory, "ref");
 #pragma warning disable IL3000 // Empty in a single-file host: handled just below.
         string sdk = typeof(SyscallAttribute).Assembly.Location;
 #pragma warning restore IL3000

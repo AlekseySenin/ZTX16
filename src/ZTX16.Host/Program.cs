@@ -11,11 +11,15 @@ using ZTX16.Platform.Authoring;
 // that terminal; otherwise errors are shown in message boxes.
 HostShell.AttachConsole();
 
+// Marks system apps that come from the executable itself rather than a system/ folder.
+const string EmbeddedApps = "<embedded>";
+
 // "ZTX16 --build <project>": build a project into a cartridge without the .NET SDK, then exit.
 if (args.Length == 2 && args[0] == "--build")
 {
     try
     {
+        EmbeddedEnvironment.PrepareToolchain();
         Console.WriteLine($"ZTX16: {ZTX16.Toolchain.ProjectTools.Build(args[1]).Message}");
         return 0;
     }
@@ -86,10 +90,14 @@ catch (InvalidOperationException e)
     return 3;
 }
 
+// Loads a packed cartridge file.
+static IRuntimeProgram LoadCartridge(string path, out ResourceStore? resources, out string title, out ZTX16.Platform.Storage.StorageSystem storage) =>
+    LoadCartridgeBytes(File.ReadAllBytes(path), out resources, out title, out storage);
+
 // Loads a packed cartridge: the executable runs in the VM, the resources go to the session.
-static IRuntimeProgram LoadCartridge(string path, out ResourceStore? resources, out string title, out ZTX16.Platform.Storage.StorageSystem storage)
+static IRuntimeProgram LoadCartridgeBytes(byte[] bytes, out ResourceStore? resources, out string title, out ZTX16.Platform.Storage.StorageSystem storage)
 {
-    CartridgeContent cartridge = CartridgeFile.Read(File.ReadAllBytes(path));
+    CartridgeContent cartridge = CartridgeFile.Read(bytes);
     resources = new ResourceStore(cartridge.Resources);
     string name = cartridge.Config.Name;
     title = string.IsNullOrWhiteSpace(name) ? "ZTX16" : $"{name} — ZTX16";
@@ -101,28 +109,39 @@ static IRuntimeProgram LoadCartridge(string path, out ResourceStore? resources, 
     return VmProgram.Load(cartridge.Executable);
 }
 
-// The system apps (Console, editors) ship as cartridges in system/ next to the executable.
+// The system apps (Console, editors): a system/ folder next to the executable if it has the Console (it can hold
+// replacement editors), otherwise the copies embedded in the executable. Null if there are none.
 static string? FindSystemApps()
 {
     string directory = Path.Combine(AppContext.BaseDirectory, "system");
-    return File.Exists(Path.Combine(directory, AppEnvironment.ShellApp + CartridgeFile.Extension)) ? directory : null;
+    if (File.Exists(Path.Combine(directory, AppEnvironment.ShellApp + CartridgeFile.Extension)))
+    {
+        return directory;
+    }
+
+    return EmbeddedEnvironment.SystemApps().Contains(AppEnvironment.ShellApp) ? EmbeddedApps : null;
 }
 
 static int RunEnvironment(HostOptions options, string systemDirectory)
 {
     string workspaceRoot = options.Workspace
         ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "ZTX16");
-    string[] apps = Directory.GetFiles(systemDirectory, "*" + CartridgeFile.Extension)
-        .Select(p => Path.GetFileNameWithoutExtension(p).ToLowerInvariant()).Order(StringComparer.Ordinal).ToArray();
+    bool embedded = systemDirectory == EmbeddedApps;
+    string[] apps = embedded
+        ? EmbeddedEnvironment.SystemApps()
+        : Directory.GetFiles(systemDirectory, "*" + CartridgeFile.Extension)
+            .Select(p => Path.GetFileNameWithoutExtension(p).ToLowerInvariant()).Order(StringComparer.Ordinal).ToArray();
 
-    LoadedProgram Load(string path)
+    LoadedProgram Load(byte[] bytes)
     {
-        IRuntimeProgram program = LoadCartridge(path, out ResourceStore? resources, out string title, out ZTX16.Platform.Storage.StorageSystem storage);
+        IRuntimeProgram program = LoadCartridgeBytes(bytes, out ResourceStore? resources, out string title, out ZTX16.Platform.Storage.StorageSystem storage);
         return new LoadedProgram(program, resources!, title, storage);
     }
 
     try
     {
+        EmbeddedEnvironment.PrepareToolchain();
+
         // First start: an empty workspace receives the Hello World project, which the code editor opens.
         var workspace = new Workspace(workspaceRoot);
         if (string.IsNullOrEmpty(workspace.List("/")))
@@ -131,7 +150,8 @@ static int RunEnvironment(HostOptions options, string systemDirectory)
         }
 
         var environment = new AppEnvironment(workspace, new HostProjectTools(), apps,
-            name => Load(Path.Combine(systemDirectory, name + CartridgeFile.Extension)), Load, SdlHost.SampleRate);
+            name => Load(embedded ? EmbeddedEnvironment.SystemApp(name) : File.ReadAllBytes(Path.Combine(systemDirectory, name + CartridgeFile.Extension))),
+            path => Load(File.ReadAllBytes(path)), SdlHost.SampleRate);
         using var host = new SdlHost(options, "ZTX16");
         return host.RunEnvironment(environment, options.Edit);
     }

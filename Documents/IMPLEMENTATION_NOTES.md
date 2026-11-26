@@ -639,3 +639,9 @@ structs, which the VM does not support; C# 12 uses arrays.
 - `tools/publish.ps1` refuses to start (changing nothing) while `dist/ZTX16/ZTX16.exe` is running; before, a
   locked executable left `dist` without its `system/`, `core/` and `ref/` folders, so the exe fell back to the file
   picker.
+- **ZTX16.exe works alone** (follow-up): the host embeds the system apps (`system/*.ztx`), the core library sources
+  (`core/*.cs`) and the reference assemblies (`ref/`: CoreLib and System.Runtime of the SDK's bundled runtime,
+  ZTX16.Sdk). A `system/` folder next to the executable still takes precedence (replacement apps); otherwise the
+  embedded apps run. When the toolchain files are not next to the executable, they are unpacked once per host
+  build into `%LOCALAPPDATA%/ZTX16/toolchain/<module id>/`. `tools/publish.ps1` now produces just `ZTX16.exe`
+  (~52 MB) plus `cartridges/`.
