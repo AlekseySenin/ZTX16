@@ -669,3 +669,11 @@ structs, which the VM does not support; C# 12 uses arrays.
   (and suppresses the automatic popup until the word ends); the selected item's signature shows in the status
   bar; items carry a kind letter (T type, M method, P property, F field, L local, A parameter, N namespace,
   E enum member, V event, K keyword, C constant).
+- Completion behaviour (follow-up): the popup opens by itself from the **third character** of a word (classes,
+  fields, methods, locals in scope), immediately after `.`, or with Ctrl+Space (any length). **Tab or a mouse
+  click** inserts the proposal; Up/Down/PgUp/PgDn choose, the wheel scrolls the list; **Enter keeps its meaning**
+  (a new line) and only closes the popup; Esc closes it. Shrinking the word below three characters closes it.
+- **Bracket pairs**: with the cursor next to `(` `)` `{` `}` `[` `]` (the one after the cursor first) or a single
+  bracket selected, it and its partner get a steel background; a bracket without a partner gets a red one.
+  Matching uses the highlighter's spans, so brackets inside strings, characters and comments are skipped; the
+  search is cached per cursor position and text revision and covers up to 3000 lines.

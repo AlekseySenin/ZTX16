@@ -536,7 +536,7 @@ public class LiveCodeTests
         env.Text("Graphics.");
         env.Text("FillR");                                 // Graphics has Fill and FillRect
         Assert.True(env.TickUntil(() => PopupVisible(env)), "the completion popup should open");
-        env.Press(Key.Enter);                               // accept the selected proposal
+        env.Press(Key.Tab);                                 // Tab accepts the selected proposal
         env.Press(Key.S, ctrl: true);
         Assert.Equal("Graphics.FillRect", Line(env, 1));
     }
@@ -551,5 +551,120 @@ public class LiveCodeTests
         env.Press(Key.Tab);                                 // Tab accepts too
         env.Press(Key.S, ctrl: true);
         Assert.Equal("Input", Line(env, 1));
+    }
+}
+
+public class CompletionAndBracketTests
+{
+    private static EnvironmentDriver Start()
+    {
+        var env = new EnvironmentDriver();
+        env.Type("new Game");
+        env.Type("edit /Game/code/Game.cs");
+        return env;
+    }
+
+    private static int Pixel(EnvironmentDriver env, int x, int y) => env.Active.Session.Graphics.Layers[0].GetPixel(x, y);
+
+    // The popup's selected row: a long run of the selection colour (26) in the editor area; returns its y or -1.
+    private static int PopupRow(EnvironmentDriver env)
+    {
+        for (int y = 12; y < 240; y++)
+        {
+            int run = 0;
+            for (int x = 18; x < 256; x++)
+            {
+                run = Pixel(env, x, y) == 26 ? run + 1 : 0;
+                if (run > 100)
+                {
+                    return y;
+                }
+            }
+        }
+
+        return -1;
+    }
+
+    private static string Line(EnvironmentDriver env, int index)
+    {
+        env.Press(Key.S, ctrl: true);
+        return env.Workspace.ReadText("/Game/code/Game.cs")!.Replace("\r", "").Split('\n')[index];
+    }
+
+    [Fact]
+    public void PopupNeedsThreeCharacters()
+    {
+        using EnvironmentDriver env = Start();
+        env.Press(Key.Down);
+        env.Text("I");
+        env.Text("n");
+        Assert.False(env.TickUntil(() => PopupRow(env) >= 0, 60), "two characters must not open the popup");
+        env.Text("p");
+        Assert.True(env.TickUntil(() => PopupRow(env) >= 0), "the third character opens it");
+    }
+
+    [Fact]
+    public void EnterClosesThePopupAndStartsANewLine()
+    {
+        using EnvironmentDriver env = Start();
+        env.Press(Key.Down);
+        env.Text("Inp");
+        Assert.True(env.TickUntil(() => PopupRow(env) >= 0));
+        env.Press(Key.Enter);
+        Assert.Equal(-1, PopupRow(env));
+        Assert.Equal("Inp", Line(env, 1));
+        Assert.Equal("", Line(env, 2).Trim());
+    }
+
+    [Fact]
+    public void ClickingAProposalInsertsIt()
+    {
+        using EnvironmentDriver env = Start();
+        env.Press(Key.Down);
+        env.Text("Graphics.");
+        env.Text("Clea");
+        Assert.True(env.TickUntil(() => PopupRow(env) >= 0));
+        int y = PopupRow(env) + 3;
+        var input = env.Active.Session.Input;
+        input.Enqueue(Platform.Input.InputEvent.MouseMoved(80, y));
+        input.Enqueue(Platform.Input.InputEvent.MouseButtonChange(MouseButton.Left, true));
+        env.Tick();
+        input.Enqueue(Platform.Input.InputEvent.MouseButtonChange(MouseButton.Left, false));
+        env.Tick();
+        Assert.Equal("Graphics.Clear", Line(env, 1));
+    }
+
+    [Fact]
+    public void BracketPairsAreHighlighted()
+    {
+        using EnvironmentDriver env = Start();
+        // Line 12 is "    public void Initialize()": the cursor at its end is right after ')'.
+        for (int i = 0; i < 11; i++)
+        {
+            env.Press(Key.Down);
+        }
+
+        env.Press(Key.End);
+        int y = 245 - (12 * 7);                             // row 11 (0-based)
+        int open = 18 + (26 * 4) + 1, close = 18 + (27 * 4) + 1;   // the bottom pixel row of a cell is background
+        Assert.Equal(27, Pixel(env, open, y));
+        Assert.Equal(27, Pixel(env, close, y));
+
+        env.Press(Key.Home);                                // away from brackets: no highlight
+        Assert.NotEqual(27, Pixel(env, open, y));
+    }
+
+    [Fact]
+    public void BracketsInStringsDoNotCount()
+    {
+        using EnvironmentDriver env = Start();
+        env.Press(Key.Down);
+        env.Text("f(\")\");");                              // f(")");  — the ')' inside the string is not the partner
+        env.Press(Key.Home);
+        env.Press(Key.Right);                               // cursor before '(' at column 1
+        int y = 245 - (2 * 7);
+        Assert.Equal(27, Pixel(env, 18 + (1 * 4) + 3, y)); // '('
+        Assert.Equal(27, Pixel(env, 18 + (5 * 4) + 3, y)); // the real ')' at column 5
+        Assert.NotEqual(27, Pixel(env, 18 + (3 * 4) + 3, y));
     }
 }

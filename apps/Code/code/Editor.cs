@@ -104,6 +104,9 @@ public sealed class Editor : ICartridge
     private bool _completionPending;
     private bool _completionOpen;
     private bool _completionSuppressed;     // after Esc or accepting: no automatic popup until the word ends
+    private bool _completionManual;         // opened with Ctrl+Space: shown for any word length
+    private int _popupX, _popupY, _popupWidth, _popupHeight, _popupRows;
+    private bool _wheelUsed;                // the wheel scrolled the popup this tick, not the text
     private int _completionLine;
     private int _completionStart;
     private int _completionSelected;
@@ -389,6 +392,12 @@ public sealed class Editor : ICartridge
         }
 
         string prefix = Strings.ToLower(Strings.Sub(_doc.Lines[_doc.Line], _completionStart, _doc.Column - _completionStart));
+        bool afterDot = _completionStart > 0 && _doc.Lines[_doc.Line][_completionStart - 1] == '.';
+        if (!afterDot && !_completionManual && prefix.Length < 3)
+        {
+            CloseCompletion();       // proposals appear from the third character of a word
+            return;
+        }
         _cShown.Clear();
         for (int pass = 0; pass < 2; pass++)
         {
@@ -416,6 +425,7 @@ public sealed class Editor : ICartridge
     private void CloseCompletion()
     {
         _completionOpen = false;
+        _completionManual = false;
         _cShown.Clear();
     }
 
@@ -452,10 +462,17 @@ public sealed class Editor : ICartridge
             used = true;
         }
 
-        if (Input.WasKeyPressed(Key.Enter) || Input.WasKeyPressed(Key.KeypadEnter) || Input.WasKeyPressed(Key.Tab))
+        if (Input.WasKeyPressed(Key.Tab))
         {
             AcceptCompletion();
             used = true;
+        }
+
+        if (Input.WasKeyPressed(Key.Enter) || Input.WasKeyPressed(Key.KeypadEnter))
+        {
+            // Enter keeps its meaning (a new line); it only closes the popup.
+            CloseCompletion();
+            _completionSuppressed = true;
         }
 
         if (Input.WasKeyPressed(Key.Escape))
@@ -575,7 +592,7 @@ public sealed class Editor : ICartridge
             {
                 Refilter();
             }
-            else if (!_completionSuppressed && !IsDigitChar(WordStartChar()))
+            else if (!_completionSuppressed && !IsDigitChar(WordStartChar()) && WordLengthBeforeCursor() >= 3)
             {
                 RequestCompletion();
             }
@@ -584,6 +601,7 @@ public sealed class Editor : ICartridge
         if (ctrl && Input.WasKeyPressed(Key.Space))
         {
             CloseCompletion();
+            _completionManual = true;
             RequestCompletion();
         }
 
@@ -663,7 +681,7 @@ public sealed class Editor : ICartridge
             }
         }
 
-        if ((Input.WasKeyTyped(Key.Enter) || Input.WasKeyTyped(Key.KeypadEnter)) && !popup)
+        if (Input.WasKeyTyped(Key.Enter) || Input.WasKeyTyped(Key.KeypadEnter))
         {
             _doc.NewLine();
         }
@@ -738,7 +756,7 @@ public sealed class Editor : ICartridge
         }
 
         int wheel = Input.MouseWheel;
-        if (wheel != 0)
+        if (wheel != 0 && !_wheelUsed)
         {
             if (_logVisible && Input.MouseY < StatusHeight + (LogRows * LineHeight))
             {
@@ -811,6 +829,7 @@ public sealed class Editor : ICartridge
 
     private void HandleMouse()
     {
+        _wheelUsed = false;
         int mx = Input.MouseX, my = Input.MouseY;
         bool pressed = Input.WasMouseButtonPressed(MouseButton.Left);
         bool down = Input.IsMouseButtonDown(MouseButton.Left);
@@ -840,6 +859,30 @@ public sealed class Editor : ICartridge
 
         if (_panel == PanelPrompt || _panel == PanelConfirm)
         {
+            return;
+        }
+
+        // The completion popup: a click picks a proposal, the wheel scrolls it.
+        if (_completionOpen && mx >= _popupX && mx < _popupX + _popupWidth && my >= _popupY && my < _popupY + _popupHeight)
+        {
+            int wheel = Input.MouseWheel;
+            if (wheel != 0)
+            {
+                _completionScroll = Document.Clamp(_completionScroll - wheel, 0, Document.Max(0, _cShown.Count - _popupRows));
+            }
+
+            if (pressed)
+            {
+                int row = (_popupY + _popupHeight - 2 - my) / LineHeight;
+                int index = _completionScroll + row;
+                if (row >= 0 && row < _popupRows && index < _cShown.Count)
+                {
+                    _completionSelected = index;
+                    AcceptCompletion();
+                }
+            }
+
+            _wheelUsed = true;
             return;
         }
 
@@ -1564,6 +1607,7 @@ public sealed class Editor : ICartridge
     {
         Graphics.Clear(Layer);
         _highlighter.Update(_doc);
+        UpdateBrackets();
         DrawText();
         DrawCompletion();
         DrawToolbar();
@@ -1632,6 +1676,7 @@ public sealed class Editor : ICartridge
                 }
             }
 
+            DrawBracketBackground(line, y);
             string[] texts = _highlighter.SpanTexts(line);
             int[] starts = _highlighter.SpanStarts(line);
             int[] colors = _highlighter.SpanColors(line);
@@ -1711,6 +1756,156 @@ public sealed class Editor : ICartridge
         }
     }
 
+    // ---- bracket pairs ----------------------------------------------------------------------------------
+
+    private const int BracketColor = 27;
+    private const int MaxBracketLines = 3000;
+    private int _bracketRevision = -1, _bracketCursorLine = -1, _bracketCursorColumn = -1;
+    private bool _bracketSelection;
+    private int _bracketLine = -1, _bracketColumn, _matchLine = -1, _matchColumn;
+
+    // Finds the bracket next to the cursor (the one after it first, then the one before it; or a selected single
+    // bracket) and its partner. Brackets in strings and comments do not count. Cached until cursor or text change.
+    private void UpdateBrackets()
+    {
+        if (_doc.Revision == _bracketRevision && _doc.Line == _bracketCursorLine && _doc.Column == _bracketCursorColumn && _doc.HasSelection == _bracketSelection)
+        {
+            return;
+        }
+
+        _bracketRevision = _doc.Revision;
+        _bracketCursorLine = _doc.Line;
+        _bracketCursorColumn = _doc.Column;
+        _bracketSelection = _doc.HasSelection;
+        _bracketLine = -1;
+        _matchLine = -1;
+
+        int line = _doc.Line;
+        if (_doc.HasSelection)
+        {
+            int startLine, startColumn, endLine, endColumn;
+            _doc.SelectionRange(out startLine, out startColumn, out endLine, out endColumn);
+            if (startLine == endLine && endColumn - startColumn == 1 && IsBracket(_doc.Lines[startLine][startColumn]) && IsCode(startLine, startColumn))
+            {
+                SetBracket(startLine, startColumn);
+            }
+
+            return;
+        }
+
+        string text = _doc.Lines[line];
+        int column = _doc.Column;
+        if (column < text.Length && IsBracket(text[column]) && IsCode(line, column))
+        {
+            SetBracket(line, column);
+        }
+        else if (column > 0 && IsBracket(text[column - 1]) && IsCode(line, column - 1))
+        {
+            SetBracket(line, column - 1);
+        }
+    }
+
+    private void SetBracket(int line, int column)
+    {
+        _bracketLine = line;
+        _bracketColumn = column;
+        char c = _doc.Lines[line][column];
+        char open = c == ')' ? '(' : c == '}' ? '{' : c == ']' ? '[' : c;
+        char close = open == '(' ? ')' : open == '{' ? '}' : ']';
+        bool forward = c == open;
+        int depth = 0;
+        int last = forward ? Document.Min(_doc.Lines.Count - 1, line + MaxBracketLines) : Document.Max(0, line - MaxBracketLines);
+        for (int l = line; forward ? l <= last : l >= last; l += forward ? 1 : -1)
+        {
+            string[] texts = _highlighter.SpanTexts(l);
+            int[] starts = _highlighter.SpanStarts(l);
+            int[] colors = _highlighter.SpanColors(l);
+            for (int si = 0; si < texts.Length; si++)
+            {
+                int s = forward ? si : texts.Length - 1 - si;
+                if (colors[s] != Highlighter.Punctuation)
+                {
+                    continue;
+                }
+
+                string span = texts[s];
+                for (int ci = 0; ci < span.Length; ci++)
+                {
+                    int k = forward ? ci : span.Length - 1 - ci;
+                    int col = starts[s] + k;
+                    if (l == line && (forward ? col < column : col > column))
+                    {
+                        continue;
+                    }
+
+                    char ch = span[k];
+                    if (ch == open)
+                    {
+                        depth += forward ? 1 : -1;
+                    }
+                    else if (ch == close)
+                    {
+                        depth += forward ? -1 : 1;
+                    }
+                    else
+                    {
+                        continue;
+                    }
+
+                    if (depth == 0)
+                    {
+                        _matchLine = l;
+                        _matchColumn = col;
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    // True if the character is outside strings and comments (it belongs to a punctuation span).
+    private bool IsCode(int line, int column)
+    {
+        int[] starts = _highlighter.SpanStarts(line);
+        string[] texts = _highlighter.SpanTexts(line);
+        int[] colors = _highlighter.SpanColors(line);
+        for (int s = 0; s < starts.Length; s++)
+        {
+            if (column >= starts[s] && column < starts[s] + texts[s].Length)
+            {
+                return colors[s] == Highlighter.Punctuation;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsBracket(char c) => c == '(' || c == ')' || c == '{' || c == '}' || c == '[' || c == ']';
+
+    // Background behind the bracket and its partner (red when the bracket has none).
+    private void DrawBracketBackground(int line, int y)
+    {
+        int color = _matchLine >= 0 ? BracketColor : ErrorColor;
+        if (line == _bracketLine)
+        {
+            DrawCell(_bracketColumn, y, color);
+        }
+
+        if (line == _matchLine)
+        {
+            DrawCell(_matchColumn, y, color);
+        }
+    }
+
+    private void DrawCell(int column, int y, int color)
+    {
+        int x = GutterWidth + ((column - _scrollLeft) * CharWidth) - 1;
+        if (x >= GutterWidth - 1 && x < Screen)
+        {
+            Graphics.FillRect(Layer, x, y, CharWidth + 1, LineHeight, color);
+        }
+    }
+
     // Worst problem on a line from live analysis or the last build: 0 error, 1 warning, -1 none.
     private int WorstProblem(int line)
     {
@@ -1751,6 +1946,7 @@ public sealed class Editor : ICartridge
         }
 
         Box(x, y, width, height);
+        (_popupX, _popupY, _popupWidth, _popupHeight, _popupRows) = (x, y, width, height, rows);
         for (int r = 0; r < rows; r++)
         {
             int index = _completionScroll + r;
