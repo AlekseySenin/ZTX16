@@ -79,6 +79,9 @@ public class AuthoringCapabilityTests
 /// <summary>Runs the environment headless like the host loop does: tick the active app, then AfterTick.</summary>
 internal sealed class EnvironmentDriver : IDisposable
 {
+    private static readonly Lazy<byte[]> GraphicsCartridge = new(() =>
+        CartridgeFile.Write(ProjectBuilder.Build(Path.Combine(CartridgeCompiler.RepositoryRoot, "apps", "Graphics"), ProjectFixtures.CoreDirectory)));
+
     private static readonly Lazy<byte[]> CodeCartridge = new(() =>
         CartridgeFile.Write(ProjectBuilder.Build(Path.Combine(CartridgeCompiler.RepositoryRoot, "apps", "Code"), ProjectFixtures.CoreDirectory)));
 
@@ -90,8 +93,10 @@ internal sealed class EnvironmentDriver : IDisposable
     public EnvironmentDriver()
     {
         Workspace = new Workspace(Path.Combine(_root.Path, "workspace"));
-        Environment = new AppEnvironment(Workspace, new Tools(), ["code", "console"],
-            name => Load(name == "code" ? CodeCartridge.Value : ConsoleCartridge.Value), path => Load(File.ReadAllBytes(path)), 48000);
+        Environment = new AppEnvironment(Workspace, new Tools(), ["code", "console", "graphics"],
+            name => Load(name == "code" ? CodeCartridge.Value : name == "graphics" ? GraphicsCartridge.Value : ConsoleCartridge.Value),
+            path => Load(File.ReadAllBytes(path)), 48000);
+        Environment.Dialogs = Dialogs;
         Environment.CodeAnalysis = new TestCodeAnalysis();
         Environment.Start();
     }
@@ -194,6 +199,47 @@ internal sealed class EnvironmentDriver : IDisposable
             CodeCompletionResult r = CodeIntelligence.Complete(projectDirectory, file, text, line, column, ProjectFixtures.CoreDirectory);
             return new CodeCompletionInfo(r.StartColumn, r.Items.Select(i => new CodeCompletionEntry(i.Label, (int)i.Kind, i.Detail)).ToList());
         }
+    }
+
+    /// <summary>Answers host file dialogs with a preset path (null = cancelled).</summary>
+    public FakeDialogs Dialogs { get; } = new();
+
+    /// <summary>Clicks at (x, y) with a mouse button (press and release on separate ticks).</summary>
+    public void Click(int x, int y, MouseButton button = MouseButton.Left)
+    {
+        InputSystem input = Active.Session.Input;
+        input.Enqueue(InputEvent.MouseMoved(x, y));
+        input.Enqueue(InputEvent.MouseButtonChange(button, true));
+        Tick();
+        input = Active.Session.Input;
+        input.Enqueue(InputEvent.MouseButtonChange(button, false));
+        Tick();
+    }
+
+    /// <summary>Drags with the left button from one point to another through the given steps.</summary>
+    public void Drag(int x0, int y0, int x1, int y1, int steps = 4)
+    {
+        InputSystem input = Active.Session.Input;
+        input.Enqueue(InputEvent.MouseMoved(x0, y0));
+        input.Enqueue(InputEvent.MouseButtonChange(MouseButton.Left, true));
+        Tick();
+        for (int i = 1; i <= steps; i++)
+        {
+            input.Enqueue(InputEvent.MouseMoved(x0 + ((x1 - x0) * i / steps), y0 + ((y1 - y0) * i / steps)));
+            Tick();
+        }
+
+        input.Enqueue(InputEvent.MouseButtonChange(MouseButton.Left, false));
+        Tick();
+    }
+
+    public sealed class FakeDialogs : IHostDialogs
+    {
+        public string? Answer { get; set; }
+
+        public void Open(string[] extensions, Action<string?> done) => done(Answer);
+
+        public void Save(string defaultName, string[] extensions, Action<string?> done) => done(Answer);
     }
 
     public void Dispose()

@@ -90,6 +90,60 @@ public sealed class GraphicsLayer
     }
 
     /// <summary>
+    /// Copies a <paramref name="width"/>×<paramref name="height"/> rectangle at (<paramref name="sourceX"/>,
+    /// <paramref name="sourceY"/>) of a ColorIndex array (rows of <paramref name="stride"/> bytes, row 0 at the
+    /// bottom) to (<paramref name="x"/>, <paramref name="y"/>), each pixel as a <paramref name="scale"/>×<paramref name="scale"/>
+    /// block. With <paramref name="skipZero"/>, index 0 leaves the layer unchanged. Clipped to the layer.
+    /// </summary>
+    public void DrawPixels(byte[] pixels, int stride, int sourceX, int sourceY, int width, int height, int x, int y, int scale, bool skipZero)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(scale, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(scale, 64);
+        ArgumentOutOfRangeException.ThrowIfLessThan(stride, 1);
+        if (width <= 0 || height <= 0 || sourceX < 0 || sourceY < 0 || sourceX + width > stride || (long)(sourceY + height) * stride > pixels.Length)
+        {
+            throw new ArgumentOutOfRangeException(nameof(width), "The source rectangle lies outside the pixel array.");
+        }
+
+        for (int sy = 0; sy < height; sy++)
+        {
+            int rowStart = ((sourceY + sy) * stride) + sourceX;
+            int destinationY = y + (sy * scale);
+            if (destinationY + scale <= 0 || destinationY >= Height)
+            {
+                continue;
+            }
+
+            for (int sx = 0; sx < width; sx++)
+            {
+                byte value = pixels[rowStart + sx];
+                if (value > 31)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(pixels), value, "ColorIndex values are 0..31.");
+                }
+
+                if (value == 0 && skipZero)
+                {
+                    continue;
+                }
+
+                int destinationX = x + (sx * scale);
+                if (scale == 1)
+                {
+                    if ((uint)destinationX < (uint)Width && (uint)destinationY < (uint)Height)
+                    {
+                        _pixels[(destinationY * Width) + destinationX] = value;
+                    }
+                }
+                else
+                {
+                    FillRectangle(destinationX, destinationY, scale, scale, value);
+                }
+            }
+        }
+    }
+
+    /// <summary>
     /// Fills an axis-aligned rectangle whose lower-left corner is (<paramref name="x"/>, <paramref name="y"/>).
     /// The rectangle is clipped to the layer bounds.
     /// </summary>

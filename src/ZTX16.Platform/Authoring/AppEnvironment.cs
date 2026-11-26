@@ -29,6 +29,16 @@ public interface IClipboard
     void SetText(string text);
 }
 
+/// <summary>The host's file dialogs, for importing and exporting files outside the workspace (system apps only).</summary>
+public interface IHostDialogs
+{
+    /// <summary>Shows an "open" dialog; <paramref name="done"/> receives the chosen host path, or null if cancelled (any thread).</summary>
+    void Open(string[] extensions, Action<string?> done);
+
+    /// <summary>Shows a "save" dialog; <paramref name="done"/> receives the chosen host path, or null if cancelled (any thread).</summary>
+    void Save(string defaultName, string[] extensions, Action<string?> done);
+}
+
 /// <summary>A clipboard kept in memory (tests, hosts without one).</summary>
 public sealed class MemoryClipboard : IClipboard
 {
@@ -126,6 +136,9 @@ public sealed class AppEnvironment
 
     /// <summary>Names of the available system apps.</summary>
     public IReadOnlyList<string> SystemApps { get; }
+
+    /// <summary>File dialogs for import and export, or null if the host has none.</summary>
+    public IHostDialogs? Dialogs { get; set; }
 
     /// <summary>Live code analysis for the code editor, or null if the host has none.</summary>
     public ICodeAnalysis? CodeAnalysis { get; set; }
@@ -367,6 +380,18 @@ public sealed class AuthoringContext
 
     /// <summary>Output of the last project build (summary or errors).</summary>
     internal string LastOutput { get; set; } = string.Empty;
+
+    /// <summary>State of the last file dialog: -1 none, 0 open, 1 chosen, 2 cancelled; and the chosen host path.</summary>
+    internal volatile int DialogState = -1;
+
+    internal volatile string? DialogPath;
+
+    /// <summary>Last image operation error, and the size of the last imported image.</summary>
+    internal string ImageError { get; set; } = string.Empty;
+
+    internal int ImportWidth { get; set; }
+
+    internal int ImportHeight { get; set; }
 
     /// <summary>Running live analysis, and the last finished one.</summary>
     internal Task<CodeAnalysisInfo>? AnalysisTask { get; set; }

@@ -1,0 +1,12 @@
+{
+  "name": "Graphics",
+  "gameId": "ztx16.system.graphics",
+  "version": "1.0.0",
+  "language": { "name": "csharp" },
+  "directories": {
+    "code": "code",
+    "palettes": "palettes",
+    "tilemaps": "tilemaps",
+    "fonts": "fonts"
+  }
+}

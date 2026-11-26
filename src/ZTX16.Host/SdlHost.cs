@@ -58,13 +58,16 @@ internal sealed unsafe class SdlHost : IDisposable
         _environment = environment;
         environment.Clipboard = new SdlClipboard();
         environment.CodeAnalysis = new HostCodeAnalysis();
+        environment.Dialogs = new SdlFileDialogs(_window);
         environment.AppFailed += (app, message) => Console.Error.WriteLine($"ZTX16: {app.Name} failed: {message}");
         environment.Start();
         // The environment opens in the code editor (it reopens the last file, or the Hello World project);
         // F1 switches to the Console, F2 back to the editor.
         if (environment.Active is { } shell && environment.SystemApps.Contains("code"))
         {
-            environment.Launch(shell, "code", edit ?? string.Empty);
+            string editor = edit is not null && (edit.EndsWith(".png", StringComparison.OrdinalIgnoreCase) || edit.EndsWith(".pal", StringComparison.OrdinalIgnoreCase))
+                && environment.SystemApps.Contains("graphics") ? "graphics" : "code";
+            environment.Launch(shell, editor, edit ?? string.Empty);
             environment.AfterTick();
         }
 

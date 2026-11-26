@@ -28,6 +28,7 @@
     <!-- System apps: built as cartridges before the host, then copied into system/. -->
     <ProjectReference Include="..\..\apps\Console\Console.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\..\apps\Code\Code.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\..\apps\Graphics\Graphics.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
   <!-- Everything the environment needs is also embedded, so ZTX16.exe works alone: the system apps, the core
        library sources and the reference assemblies for building cartridges (unpacked on demand). -->

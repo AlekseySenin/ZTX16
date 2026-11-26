@@ -131,6 +131,22 @@ public static class Apps
     [Syscall("apps.set_clipboard")]
     public static void SetClipboard(string text) => throw new NotInVmException();
 
+    /// <summary>Shows the host "open file" dialog (extensions like "png;jpg"). False if a dialog is already open or there are none.</summary>
+    [Syscall("apps.open_dialog")]
+    public static bool OpenDialog(string extensions) => throw new NotInVmException();
+
+    /// <summary>Shows the host "save file" dialog with a suggested name.</summary>
+    [Syscall("apps.save_dialog")]
+    public static bool SaveDialog(string defaultName, string extensions) => throw new NotInVmException();
+
+    /// <summary>The last dialog: -1 none, 0 still open, 1 a file was chosen, 2 cancelled.</summary>
+    [Syscall("apps.dialog_state")]
+    public static int DialogState() => throw new NotInVmException();
+
+    /// <summary>The name (not the path) of the file chosen in the last dialog.</summary>
+    [Syscall("apps.dialog_name")]
+    public static string DialogName() => throw new NotInVmException();
+
     /// <summary>The environment's version text.</summary>
     [Syscall("apps.version")]
     public static string Version() => throw new NotInVmException();
@@ -169,4 +185,40 @@ public static class CodeAnalysis
     /// <summary>The last completion: first line the start column of the word, then one item per line: <c>kind, label, detail</c> separated by tabs (kind 10 = keyword).</summary>
     [Syscall("code.completion")]
     public static string Completion() => throw new NotInVmException();
+}
+
+/// <summary>Images for the graphics editor: tilemap PNGs in the workspace, and import/export of PNG files.</summary>
+public static class Images
+{
+    /// <summary>A tilemap PNG's 256×256 ColorIndex pixels (row 0 at the bottom), or null (see <see cref="Error"/>).</summary>
+    [Syscall("images.load_tilemap")]
+    public static byte[]? LoadTilemap(string path) => throw new NotInVmException();
+
+    /// <summary>Saves 256×256 pixels as an indexed PNG with a 32 × RGB (8-bit) palette. Returns an error message or "".</summary>
+    [Syscall("images.save_tilemap")]
+    public static string SaveTilemap(string path, byte[] pixels, byte[] palette) => throw new NotInVmException();
+
+    /// <summary>
+    /// Reads the PNG chosen in the last open dialog (any common PNG), mapping its colours to the nearest of
+    /// <paramref name="palette"/> (32 × RGB). Rows run from the bottom; the size is <see cref="ImportWidth"/> ×
+    /// <see cref="ImportHeight"/>. Null on failure.
+    /// </summary>
+    [Syscall("images.import")]
+    public static byte[]? Import(byte[] palette) => throw new NotInVmException();
+
+    /// <summary>Width of the last imported image.</summary>
+    [Syscall("images.import_width")]
+    public static int ImportWidth() => throw new NotInVmException();
+
+    /// <summary>Height of the last imported image.</summary>
+    [Syscall("images.import_height")]
+    public static int ImportHeight() => throw new NotInVmException();
+
+    /// <summary>Writes a tilemap PNG to the file chosen in the last save dialog. Returns an error message or "".</summary>
+    [Syscall("images.export")]
+    public static string Export(byte[] pixels, byte[] palette) => throw new NotInVmException();
+
+    /// <summary>The last image error.</summary>
+    [Syscall("images.error")]
+    public static string Error() => throw new NotInVmException();
 }

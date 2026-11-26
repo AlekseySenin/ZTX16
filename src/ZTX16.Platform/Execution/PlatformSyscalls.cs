@@ -57,6 +57,12 @@ internal static class PlatformSyscalls
             Layer(a[0]).Resize(ToI32(a[1]), ToI32(a[2]));
             return 0;
         });
+        BindWithContext("graphics.draw_pixels", (c, a) =>
+        {
+            byte[] pixels = c.ReadByteArray(a[3]) ?? throw new ArgumentNullException(nameof(a), "Pixel array is null.");
+            Layer(a[0]).DrawPixels(pixels, ToI32(a[4]), ToI32(a[5]), ToI32(a[6]), ToI32(a[7]), ToI32(a[8]), ToI32(a[1]), ToI32(a[2]), ToI32(a[9]), ToI32(a[10]) != 0);
+            return 0;
+        });
         Bind("graphics.layer_width", a => Layer(a[0]).Width);
         Bind("graphics.layer_height", a => Layer(a[0]).Height);
         Bind("graphics.clear_layers", _ => { graphics.ClearLayers(); return 0; });

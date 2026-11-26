@@ -680,3 +680,27 @@ structs, which the VM does not support; C# 12 uses arrays.
   bracket selected, it and its partner get a steel background; a bracket without a partner gets a red one.
   Matching uses the highlighter's spans, so brackets inside strings, characters and comments are skipped; the
   search is cached per cursor position and text revision and covers up to 3000 lines.
+
+## Editors-4 — graphics editor (tilemaps and palettes)
+
+- `apps/Graphics` (system app `graphics`; Console `EDIT file.png|.pal`, `ZTX16.exe --edit /path.png`). Layout after
+  the agreed sketch: toolbar **OPEN · SAVE · SAVE AS · IMPORT · EXPORT** (file name / messages on the right); left
+  column: **main screen** (the selected tile or tile region, zoomed to fit, 2–16×; wheel zooms; scrollbars when the
+  region is larger), **palette** (32 swatches, MENU: edit colour, load, save, save as), **tools** (brush, eraser,
+  fill, pipette, select; actions copy, paste, flip H, flip V, rotate), **tool settings** (brush size, fill area /
+  all of a colour, paste transparency, grid); right: the whole **256×256 tilemap** with scrollbars, where a click or
+  drag selects a tile region. The animation area (timeline, frames) is reserved for the next stage.
+- Painting: left button primary colour, right button secondary; strokes follow the mouse with Bresenham lines;
+  fill is 4-connected (or every pixel of the colour) inside the region; tools work inside the region; select drags
+  a pixel rectangle; copy takes the selection (or the whole region); paste floats under the mouse in either the main
+  screen or the tilemap and is placed with a click (index 0 transparent or solid); flips and 90° rotation apply to
+  the floating paste, the selection or the region. Undo/redo: 40 snapshots. Keys: B E F I S, Ctrl+C/X/V/Z/Y/S/O,
+  Del, [ ] size, G grid, H V R, arrows move the region, Esc.
+- The interface uses the edited palette itself, so its colours are chosen from the palette (greys preferred for
+  backgrounds and text, the most saturated bright colour as accent) and follow edits. Index 0 shows as a
+  checkerboard. Opening an image inside a project loads that project's `palettes/default.pal`.
+- Platform additions: `Graphics.DrawPixels` (a ColorIndex array rectangle, scaled 1–64×, optionally skipping index 0
+  — one call draws a whole view); authoring `images.*` (load/save tilemap PNGs in the workspace; import the PNG chosen
+  in a host dialog — any common PNG: grey, RGB, RGBA, indexed — mapped to the nearest palette colours, transparent →
+  0; export to the chosen file) and `apps.open_dialog` / `apps.save_dialog` / `apps.dialog_state` / `apps.dialog_name`
+  (SDL file dialogs; the app never sees host paths, only the chosen file's name). `PngImport` in the cartridge library.

@@ -57,6 +57,16 @@ public static class Graphics
     [Syscall("graphics.fill_rect")]
     public static void FillRect(int layer, int x, int y, int width, int height, int color) => throw new NotInVmException();
 
+    /// <summary>
+    /// Draws a rectangle of a ColorIndex array: the <paramref name="width"/>×<paramref name="height"/> pixels at
+    /// (<paramref name="sourceX"/>, <paramref name="sourceY"/>) of <paramref name="pixels"/> (rows of
+    /// <paramref name="stride"/> values, row 0 at the bottom) go to (<paramref name="x"/>, <paramref name="y"/>), each as a
+    /// <paramref name="scale"/>×<paramref name="scale"/> block (1..64). With <paramref name="skipZero"/>, index 0 is not drawn.
+    /// </summary>
+    [Syscall("graphics.draw_pixels")]
+    public static void DrawPixels(int layer, int x, int y, byte[] pixels, int stride, int sourceX, int sourceY, int width, int height,
+        int scale, bool skipZero) => throw new NotInVmException();
+
     /// <summary>Recreates a layer with a size in 256×256 screens; the new buffer is cleared.</summary>
     [Syscall("graphics.resize_layer")]
     public static void ResizeLayer(int layer, int widthInScreens, int heightInScreens) => throw new NotInVmException();

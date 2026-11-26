@@ -13,7 +13,7 @@ namespace ZTX16.Platform.Execution;
 internal static class AuthoringSyscalls
 {
     /// <summary>Name prefixes of the authoring syscalls.</summary>
-    public static readonly string[] Prefixes = ["workspace.", "projects.", "apps.", "code."];
+    public static readonly string[] Prefixes = ["workspace.", "projects.", "apps.", "code.", "images."];
 
     /// <summary>True if <paramref name="name"/> is an authoring syscall.</summary>
     public static bool IsAuthoring(string name) => Prefixes.Any(name.StartsWith);
@@ -191,6 +191,129 @@ internal static class AuthoringSyscalls
             }
 
             return null;
+        }
+
+        // Host file dialogs (import/export): the app never sees host paths, only the chosen file's name.
+        bind("apps.open_dialog", (c, a) => StartDialog(Text(c, a[0]), null));
+        bind("apps.save_dialog", (c, a) => StartDialog(Text(c, a[1]), Text(c, a[0])));
+        bind("apps.dialog_state", (_, _) => context!.DialogState);
+        bind("apps.dialog_name", (c, _) => c.NewString(context!.DialogPath is { } chosen ? System.IO.Path.GetFileName(chosen) : ""));
+
+        // Images: tilemap PNGs in the workspace, import/export through the dialogs.
+        bind("images.load_tilemap", (c, a) =>
+        {
+            byte[]? png = Ws().ReadBytes(Text(c, a[0]));
+            if (png is null)
+            {
+                context!.ImageError = "cannot read the file";
+                return 0;
+            }
+
+            try
+            {
+                return c.NewByteArray(ZTX16.Cartridge.TilemapFormat.Pixels(ZTX16.Cartridge.TilemapFormat.FromPng(png, Text(c, a[0])), "tilemap"));
+            }
+            catch (ZTX16.Cartridge.ProjectException e)
+            {
+                context!.ImageError = e.Message;
+                return 0;
+            }
+        });
+        bind("images.save_tilemap", (c, a) =>
+        {
+            byte[]? png = TilemapPng(c.ReadByteArray(a[1]), c.ReadByteArray(a[2]));
+            return c.NewString(png is null ? context!.ImageError : Ws().WriteBytes(Text(c, a[0]), png));
+        });
+        bind("images.import", (c, a) =>
+        {
+            byte[]? palette = c.ReadByteArray(a[0]);
+            if (context!.DialogState != 1 || context.DialogPath is not { } chosen || palette is not { Length: 96 })
+            {
+                context.ImageError = "no file chosen";
+                return 0;
+            }
+
+            try
+            {
+                byte[] indices = ZTX16.Cartridge.PngImport.ToIndices(File.ReadAllBytes(chosen), palette, out int width, out int height);
+                (context.ImportWidth, context.ImportHeight) = (width, height);
+                return c.NewByteArray(indices);
+            }
+            catch (Exception e) when (e is ZTX16.Cartridge.ProjectException or IOException or UnauthorizedAccessException or InvalidDataException)
+            {
+                context.ImageError = e.Message;
+                return 0;
+            }
+        });
+        bind("images.import_width", (_, _) => context!.ImportWidth);
+        bind("images.import_height", (_, _) => context!.ImportHeight);
+        bind("images.export", (c, a) =>
+        {
+            if (context!.DialogState != 1 || context.DialogPath is not { } chosen)
+            {
+                return c.NewString("no file chosen");
+            }
+
+            byte[]? png = TilemapPng(c.ReadByteArray(a[0]), c.ReadByteArray(a[1]));
+            if (png is null)
+            {
+                return c.NewString(context.ImageError);
+            }
+
+            try
+            {
+                File.WriteAllBytes(chosen, png);
+                return c.NewString("");
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                return c.NewString(e.Message);
+            }
+        });
+        bind("images.error", (c, _) => c.NewString(context!.ImageError));
+
+        // A 256×256 indexed PNG from tilemap pixels (row 0 at the bottom) and a 32 × RGB palette.
+        byte[]? TilemapPng(byte[]? pixels, byte[]? palette)
+        {
+            if (pixels is not { Length: 65536 } || palette is not { Length: 96 })
+            {
+                context!.ImageError = "a tilemap is 256×256 pixels with a 32-colour palette";
+                return null;
+            }
+
+            byte[] data = new byte[65536 + 96];
+            pixels.CopyTo(data, 0);
+            palette.CopyTo(data, 65536);
+            return ZTX16.Cartridge.TilemapFormat.ToPng(data, "tilemap");
+        }
+
+        long StartDialog(string extensions, string? defaultName)
+        {
+            if (Env().Dialogs is not { } dialogs || context!.DialogState == 0)
+            {
+                return 0;
+            }
+
+            string[] list = extensions.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            context.DialogPath = null;
+            context.DialogState = 0;
+            AuthoringContext target = context;
+            void Done(string? path)
+            {
+                target.DialogPath = path;
+                target.DialogState = path is null ? 2 : 1;
+            }
+
+            if (defaultName is null)
+            {
+                dialogs.Open(list, Done);
+            }
+            else
+            {
+                dialogs.Save(defaultName, list, Done);
+            }
+
+            return 1;
         }
 
         bool Build(string path)
