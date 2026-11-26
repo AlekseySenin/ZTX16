@@ -46,7 +46,7 @@ powershell -ExecutionPolicy Bypass -File tools/publish.ps1
 
 This produces `dist/ZTX16/ZTX16.exe` — one self-contained file (the .NET runtime and SDL3 inside, nothing to install) — and `dist/ZTX16/cartridges/` with the sample cartridges. Copy the folder anywhere. Then:
 
-- **double-click `ZTX16.exe`**: a file dialog asks for a cartridge (it opens in `cartridges/`);
+- **double-click `ZTX16.exe`**: boots into the ZTX16 Console (type HELP): create, build and run projects in your workspace (`DocumentsZTX16`); F12 returns from a running game;
 - **drag a `.ztx` onto `ZTX16.exe`**, or use **Open with → ZTX16.exe** on a `.ztx` file (tick "always" to make `.ztx` files open with a double-click);
 - from a terminal: `ZTX16.exe game.ztx [--scale N] [--fullscreen]` — messages appear in that terminal.
 
@@ -55,10 +55,11 @@ The window title shows the cartridge name. Without a terminal, errors (a broken 
 ## Host options
 
 ```
-dotnet run --project src/ZTX16.Host -- [--scale 1..8] [--fullscreen] [<file.ztx | file.ztxe> | --exe <file> | --vm-demo | --diagnostic]
+dotnet run --project src/ZTX16.Host -- [--scale 1..8] [--fullscreen] [--workspace <dir>] [<file.ztx | file.ztxe> | --exe <file> | --vm-demo | --diagnostic]
+dotnet run --project src/ZTX16.Host -- --build <project>
 ```
 
-Without a cartridge the host asks for one with the system file dialog; `--diagnostic` runs its built-in diagnostic program and `--vm-demo` a hand-assembled bytecode demo.
+Without a cartridge the host boots into the ZTX16 Console (system apps in `system/`, built from `apps/`; if they are missing it asks for a cartridge with the file dialog); `--diagnostic` runs its built-in diagnostic program and `--vm-demo` a hand-assembled bytecode demo.
 
 | Key | Action |
 |---|---|
@@ -77,6 +78,7 @@ Diagnostic program: arrows / WASD / D-pad / left stick move the square (its heig
 - `src/ZTX16.Cartridge` — Project Config, project discovery, resource formats, cartridge file, extraction.
 - `src/ZTX16.Toolchain` — `ztx16c` (new / build / extract / translate), IL → ZTX16 translator, cartridge build targets.
 - `src/ZTX16.Host` — SDL3 reference host (`ZTX16.exe`).
-- `tools/publish.ps1` — publishes the single-file `ZTX16.exe` with the sample cartridges to `dist/`.
+- `apps/Console` — the ZTX16 Console (system app: shell, file manager, project workflow).
+- `tools/publish.ps1` — publishes the single-file `ZTX16.exe` with the system apps, build support and sample cartridges to `dist/`.
 - `samples/` — example cartridges.
 - `tests/ZTX16.Tests` — unit, VM, toolchain and differential tests.

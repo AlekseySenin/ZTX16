@@ -43,6 +43,102 @@ internal sealed unsafe class SdlHost : IDisposable
         _title = title;
     }
 
+    public const int SampleRate = AudioSampleRate;
+
+    private ZTX16.Platform.Authoring.AppEnvironment? _environment;
+
+    /// <summary>
+    /// Runs the ZTX16 environment (Console and editors, plus cartridges they start) until the Console exits or
+    /// the window closes. F12 returns to the Console.
+    /// </summary>
+    public int RunEnvironment(ZTX16.Platform.Authoring.AppEnvironment environment)
+    {
+        CreateWindowAndRenderer();
+        _environment = environment;
+        environment.AppFailed += (app, message) => Console.Error.WriteLine($"ZTX16: {app.Name} failed: {message}");
+        environment.Start();
+
+        ZTX16.Platform.Authoring.AppSession? bound = null;
+        var warned = new HashSet<RuntimeSession>();
+        var clock = Stopwatch.StartNew();
+        var scheduler = new TickScheduler(Stopwatch.Frequency);
+        while (environment.Active is { } active)
+        {
+            if (active != bound)
+            {
+                // App switch: input, audio and the window title follow the active app.
+                if (_input is null)
+                {
+                    _input = new SdlInputTranslator(active.Session.Input);
+                    _audio = new SdlAudioOutput(active.Session.Audio);
+                }
+                else
+                {
+                    _input.Retarget(active.Session.Input);
+                    _audio!.Engine = active.Session.Audio;
+                }
+
+                if (warned.Add(active.Session))
+                {
+                    string name = active.Name;
+                    active.Session.Machine.Warned += message => Console.Error.WriteLine($"ZTX16: {name}: warning: {message}");
+                }
+
+                SDL_SetWindowTitle(_window, active.Title);
+                bound = active;
+            }
+
+            if (!PumpEvents(active.Session))
+            {
+                break;
+            }
+
+            if (environment.Active != active)
+            {
+                continue;   // F12 switched apps while events were handled
+            }
+
+            if (_minimized)
+            {
+                SDL_Delay(10);
+                continue;
+            }
+
+            long now = clock.ElapsedTicks;
+            if (!scheduler.IsTickDue(now))
+            {
+                TimeSpan wait = scheduler.ToTimeSpan(scheduler.TimeUntilNextTick(now));
+                SDL_DelayPrecise((ulong)(wait.Ticks * 100));
+                continue;
+            }
+
+            scheduler.TickStarted(now);
+            active.Session.Machine.SuspendRequested = false;
+            try
+            {
+                active.Session.RunTick(scheduler.ToTimeSpan(now));
+            }
+            catch (Exception e) when (e is ZTX16.VM.VmTrapException or ZTX16.VM.LinkException)
+            {
+                if (!environment.Fail(e.Message))
+                {
+                    break;
+                }
+
+                continue;
+            }
+
+            Present(active.Session.Graphics);
+            if (!environment.AfterTick())
+            {
+                break;
+            }
+        }
+
+        environment.Shutdown();
+        return 0;
+    }
+
     /// <summary>Runs <paramref name="program"/> until it exits or the window closes. Returns the process exit code.</summary>
     public int Run(IRuntimeProgram program, ResourceStore? resources = null, ZTX16.Platform.Storage.StorageSystem? storage = null)
     {
@@ -133,6 +229,9 @@ internal sealed unsafe class SdlHost : IDisposable
 
         SDL_SetRenderLogicalPresentation(_renderer, Width, Height, SDL_RendererLogicalPresentation.SDL_LOGICAL_PRESENTATION_INTEGER_SCALE);
 
+        // Text input events (Input.GetText) for typing; key events keep flowing as well.
+        SDL_StartTextInput(_window);
+
         _texture = SDL_CreateTexture(_renderer, SDL_PixelFormat.SDL_PIXELFORMAT_ARGB8888, SDL_TextureAccess.SDL_TEXTUREACCESS_STREAMING, Width, Height);
         if (_texture == null)
         {
@@ -213,6 +312,11 @@ internal sealed unsafe class SdlHost : IDisposable
             case SDL_Scancode.SDL_SCANCODE_F11:
                 _fullscreen = !_fullscreen;
                 SDL_SetWindowFullscreen(_window, _fullscreen);
+                return true;
+
+            case SDL_Scancode.SDL_SCANCODE_F12 when _environment is not null:
+                _environment.ReturnToShell();
+                _environment.AfterTick();
                 return true;
 
             case SDL_Scancode.SDL_SCANCODE_F10 when !_fullscreen:

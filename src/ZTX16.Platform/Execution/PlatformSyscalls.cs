@@ -79,6 +79,8 @@ internal static class PlatformSyscalls
         Bind("input.key_down", a => FromBool(input.Keyboard[(Key)ToI32(a[0])].IsDown));
         Bind("input.key_pressed", a => FromBool(input.Keyboard[(Key)ToI32(a[0])].Pressed));
         Bind("input.key_released", a => FromBool(input.Keyboard[(Key)ToI32(a[0])].Released));
+        Bind("input.key_typed", a => FromBool(input.Keyboard.WasTyped((Key)ToI32(a[0]))));
+        BindWithContext("input.text", (c, _) => c.NewString(input.Keyboard.Text));
 
         // Mouse
         Bind("input.mouse_x", _ => input.Mouse.X);
@@ -262,6 +264,8 @@ internal static class PlatformSyscalls
             return 0;
         });
 
+        AuthoringSyscalls.Register(session, BindWithContext);
+
         string[] missing = SdkAbi.Syscalls.Keys.Where(name => !bound.Contains(name)).Order(StringComparer.Ordinal).ToArray();
         if (missing.Length > 0)
         {
@@ -279,7 +283,12 @@ internal static class PlatformSyscalls
                 throw new InvalidOperationException($"Syscall '{name}' is not declared in the SDK.");
             }
 
-            table.Add(name, descriptor.Signature, handler);
+            // Authoring syscalls exist only for system apps; for anything else importing them fails to link.
+            if (session.Authoring is not null || !AuthoringSyscalls.IsAuthoring(name))
+            {
+                table.Add(name, descriptor.Signature, handler);
+            }
+
             bound.Add(name);
         }
 

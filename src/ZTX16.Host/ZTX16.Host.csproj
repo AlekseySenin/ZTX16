@@ -23,5 +23,15 @@
   <ItemGroup>
     <ProjectReference Include="..\ZTX16.Platform\ZTX16.Platform.csproj" />
     <ProjectReference Include="..\ZTX16.Cartridge\ZTX16.Cartridge.csproj" />
+    <!-- The environment builds projects in-process (Console BUILD/RUN). -->
+    <ProjectReference Include="..\ZTX16.Toolchain\ZTX16.Toolchain.csproj" />
+    <!-- System apps: built as cartridges before the host, then copied into system/. -->
+    <ProjectReference Include="..\..\apps\Console\Console.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
+  <Target Name="CopySystemApps" AfterTargets="Build">
+    <ItemGroup>
+      <ZTX16SystemApp Include="$(MSBuildThisFileDirectory)..\..\apps\*\bin\$(Configuration)\net10.0\*.ztx" />
+    </ItemGroup>
+    <Copy SourceFiles="@(ZTX16SystemApp)" DestinationFolder="$(OutDir)system" SkipUnchangedFiles="true" />
+  </Target>
 </Project>

@@ -41,7 +41,7 @@ catch (IOException e)
 
 static int New(string directory, string[] options)
 {
-    string name = Path.GetFileName(Path.GetFullPath(directory));
+    string? name = null;
     string? id = null;
     for (int i = 0; i + 1 < options.Length; i += 2)
     {
@@ -53,28 +53,19 @@ static int New(string directory, string[] options)
         }
     }
 
-    id ??= "dev.local." + new string(name.ToLowerInvariant().Where(c => char.IsAsciiLetterOrDigit(c)).ToArray()).PadRight(1, 'x');
-    Project.Create(directory, name, id, ProjectTemplates.GameSource, ProjectTemplates.DefaultPalette);
-    Console.WriteLine($"ztx16c: created project '{name}' ({id}) in {Path.GetFullPath(directory)}");
+    Console.WriteLine($"ztx16c: {ProjectTools.Create(directory, name, id)} in {Path.GetFullPath(directory)}");
     return 0;
 }
 
 static int Build(string project, string? output)
 {
-    CartridgeContent cartridge = ProjectBuilder.Build(project);
-    output ??= Path.Combine(Path.GetFullPath(project), "bin", SafeFileName(cartridge.Config.Name) + CartridgeFile.Extension);
-    Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output))!);
-    byte[] bytes = CartridgeFile.Write(cartridge);
-    File.WriteAllBytes(output, bytes);
-    Console.WriteLine($"ztx16c: {cartridge.Config.Name} -> {output} ({bytes.Length} bytes; {cartridge.Resources.Count} resources, {cartridge.Sources.Count} sources)");
+    Console.WriteLine($"ztx16c: {ProjectTools.Build(project, output).Message}");
     return 0;
 }
 
 static int Extract(string cartridge, string directory)
 {
-    CartridgeContent content = CartridgeFile.Read(File.ReadAllBytes(cartridge));
-    ProjectExtractor.Extract(content, directory);
-    Console.WriteLine($"ztx16c: extracted {content.Config.Name} into {Path.GetFullPath(directory)}");
+    Console.WriteLine($"ztx16c: {ProjectTools.Extract(cartridge, directory)} into {Path.GetFullPath(directory)}");
     return 0;
 }
 
@@ -85,9 +76,6 @@ static int Translate(string input, string output)
     Console.WriteLine($"ztx16c: {Path.GetFileName(input)} -> {output} ({executable.Length} bytes)");
     return 0;
 }
-
-static string SafeFileName(string name) =>
-    new string(name.Select(c => Path.GetInvalidFileNameChars().Contains(c) || c == ' ' ? '_' : c).ToArray());
 
 static int Fail(string message, int code)
 {

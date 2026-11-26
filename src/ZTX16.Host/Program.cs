@@ -5,10 +5,27 @@ using ZTX16.Host.Diagnostics;
 using ZTX16.Platform.Runtime;
 using ZTX16.VM;
 using ZTX16.Cartridge;
+using ZTX16.Platform.Authoring;
 
 // ZTX16.exe is a GUI program: double-clicking it opens no console. Started from a terminal it attaches to
 // that terminal; otherwise errors are shown in message boxes.
 HostShell.AttachConsole();
+
+// "ZTX16 --build <project>": build a project into a cartridge without the .NET SDK, then exit.
+if (args.Length == 2 && args[0] == "--build")
+{
+    try
+    {
+        Console.WriteLine($"ZTX16: {ZTX16.Toolchain.ProjectTools.Build(args[1]).Message}");
+        return 0;
+    }
+    catch (Exception e) when (e is ProjectException or ZTX16.Toolchain.BuildException or ZTX16.Toolchain.TranslationException
+        or IOException or UnauthorizedAccessException)
+    {
+        HostShell.Error(e.Message);
+        return 1;
+    }
+}
 
 HostOptions options;
 IRuntimeProgram program;
@@ -18,6 +35,12 @@ string title = "ZTX16";
 try
 {
     options = HostOptions.Parse(args);
+    if (options.Program == HostProgram.Picker && FindSystemApps() is { } systemDirectory)
+    {
+        // Started without a cartridge and the system apps are installed: boot into the ZTX16 environment.
+        return RunEnvironment(options, systemDirectory);
+    }
+
     if (options.Program == HostProgram.Picker)
     {
         // Started without a cartridge (for example by double-clicking the executable): ask for one.
@@ -78,6 +101,41 @@ static IRuntimeProgram LoadCartridge(string path, out ResourceStore? resources, 
     return VmProgram.Load(cartridge.Executable);
 }
 
+// The system apps (Console, editors) ship as cartridges in system/ next to the executable.
+static string? FindSystemApps()
+{
+    string directory = Path.Combine(AppContext.BaseDirectory, "system");
+    return File.Exists(Path.Combine(directory, AppEnvironment.ShellApp + CartridgeFile.Extension)) ? directory : null;
+}
+
+static int RunEnvironment(HostOptions options, string systemDirectory)
+{
+    string workspaceRoot = options.Workspace
+        ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "ZTX16");
+    string[] apps = Directory.GetFiles(systemDirectory, "*" + CartridgeFile.Extension)
+        .Select(p => Path.GetFileNameWithoutExtension(p).ToLowerInvariant()).Order(StringComparer.Ordinal).ToArray();
+
+    LoadedProgram Load(string path)
+    {
+        IRuntimeProgram program = LoadCartridge(path, out ResourceStore? resources, out string title, out ZTX16.Platform.Storage.StorageSystem storage);
+        return new LoadedProgram(program, resources!, title, storage);
+    }
+
+    try
+    {
+        var environment = new AppEnvironment(new Workspace(workspaceRoot), new HostProjectTools(), apps,
+            name => Load(Path.Combine(systemDirectory, name + CartridgeFile.Extension)), Load, SdlHost.SampleRate);
+        using var host = new SdlHost(options, "ZTX16");
+        return host.RunEnvironment(environment);
+    }
+    catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidOperationException or VmTrapException
+        or LinkException or CartridgeFormatException or ExecutableFormatException or VerificationException)
+    {
+        HostShell.Error(e.Message);
+        return 1;
+    }
+}
+
 namespace ZTX16.Host
 {
     /// <summary>What the host runs.</summary>
@@ -97,13 +155,13 @@ namespace ZTX16.Host
     }
 
     /// <summary>Command-line options of the reference host.</summary>
-    internal sealed record HostOptions(int Scale, bool Fullscreen, HostProgram Program, string? ExecutablePath)
+    internal sealed record HostOptions(int Scale, bool Fullscreen, HostProgram Program, string? ExecutablePath, string? Workspace = null)
     {
         public const int MinScale = 1;
         public const int MaxScale = 8;
 
         private const string Usage =
-            "Usage: ZTX16 [--scale N] [--fullscreen] [<file.ztx | file.ztxe> | --exe <file> | --vm-demo | --diagnostic]";
+            "Usage: ZTX16 [--scale N] [--fullscreen] [--workspace <dir>] [<file.ztx | file.ztxe> | --exe <file> | --vm-demo | --diagnostic]";
 
         public static HostOptions Parse(string[] args)
         {
@@ -111,6 +169,7 @@ namespace ZTX16.Host
             bool fullscreen = false;
             HostProgram program = HostProgram.Picker;
             string? executable = null;
+            string? workspace = null;
 
             for (int i = 0; i < args.Length; i++)
             {
@@ -128,6 +187,9 @@ namespace ZTX16.Host
                         break;
                     case "--vm-demo":
                         program = HostProgram.VmDemo;
+                        break;
+                    case "--workspace" when i + 1 < args.Length:
+                        workspace = args[++i];
                         break;
                     case "--diagnostic":
                         program = HostProgram.Diagnostic;
@@ -151,7 +213,7 @@ namespace ZTX16.Host
                 throw new ArgumentException($"Scale must be {MinScale}..{MaxScale}. {Usage}");
             }
 
-            return new HostOptions(scale, fullscreen, program, executable);
+            return new HostOptions(scale, fullscreen, program, executable, workspace);
         }
     }
 }

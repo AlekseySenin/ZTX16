@@ -60,6 +60,7 @@ public sealed class InputSystem
         }
 
         Mouse.EndEvents();
+        Keyboard.EndEvents();
     }
 
     private void Apply(in InputEvent e)
@@ -68,6 +69,12 @@ public sealed class InputSystem
         {
             case InputEventKind.Key:
                 Keyboard.SetKey(e.Key, e.Down);
+                break;
+            case InputEventKind.KeyRepeat:
+                Keyboard.RepeatKey(e.Key);
+                break;
+            case InputEventKind.Text:
+                Keyboard.AddText(e.Text ?? string.Empty);
                 break;
             case InputEventKind.MouseMove:
                 Mouse.SetPosition(e.X, e.Y);
@@ -103,6 +110,8 @@ public sealed class InputSystem
 internal enum InputEventKind
 {
     Key,
+    KeyRepeat,
+    Text,
     MouseMove,
     MouseButton,
     MouseWheel,
@@ -134,7 +143,13 @@ internal readonly record struct InputEvent(InputEventKind Kind)
 
     public float Value { get; init; }
 
+    public string? Text { get; init; }
+
     public static InputEvent KeyChange(Key key, bool down) => new(InputEventKind.Key) { Key = key, Down = down };
+
+    public static InputEvent KeyRepeat(Key key) => new(InputEventKind.KeyRepeat) { Key = key };
+
+    public static InputEvent TextTyped(string text) => new(InputEventKind.Text) { Text = text };
 
     public static InputEvent MouseMoved(int x, int y) => new(InputEventKind.MouseMove) { X = x, Y = y };
 

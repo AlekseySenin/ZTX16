@@ -14,9 +14,22 @@ internal sealed unsafe class SdlInputTranslator : IDisposable
 {
     private const int DisplayHeight = GraphicsSystem.DisplayHeight;
 
-    private readonly InputSystem _input;
+    private InputSystem _input;
     private readonly SDL_JoystickID[] _slotOwners = new SDL_JoystickID[InputSystem.GamepadSlotCount];
     private readonly IntPtr[] _slotHandles = new IntPtr[InputSystem.GamepadSlotCount];
+
+    /// <summary>Sends input to another session (app switch); connected gamepads are announced to it.</summary>
+    public void Retarget(InputSystem input)
+    {
+        _input = input;
+        for (int slot = 0; slot < _slotHandles.Length; slot++)
+        {
+            if (_slotHandles[slot] != IntPtr.Zero)
+            {
+                _input.Enqueue(InputEvent.GamepadConnection(slot, true));
+            }
+        }
+    }
 
     public SdlInputTranslator(InputSystem input)
     {
@@ -29,9 +42,21 @@ internal sealed unsafe class SdlInputTranslator : IDisposable
         {
             case SDL_EventType.SDL_EVENT_KEY_DOWN:
             case SDL_EventType.SDL_EVENT_KEY_UP:
-                if (!e.key.repeat)
+                if (e.key.repeat)
+                {
+                    _input.Enqueue(InputEvent.KeyRepeat(MapKey(e.key.scancode)));
+                }
+                else
                 {
                     _input.Enqueue(InputEvent.KeyChange(MapKey(e.key.scancode), e.key.down));
+                }
+
+                break;
+
+            case SDL_EventType.SDL_EVENT_TEXT_INPUT:
+                if (System.Runtime.InteropServices.Marshal.PtrToStringUTF8((IntPtr)e.text.text) is { Length: > 0 } text)
+                {
+                    _input.Enqueue(InputEvent.TextTyped(text));
                 }
 
                 break;

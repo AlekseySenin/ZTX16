@@ -1,0 +1,10 @@
+{
+  "name": "Console",
+  "gameId": "ztx16.system.console",
+  "version": "1.0.0",
+  "language": { "name": "csharp" },
+  "directories": {
+    "code": "code",
+    "palettes": "palettes"
+  }
+}

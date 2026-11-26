@@ -12,7 +12,7 @@ namespace ZTX16.Host;
 /// </summary>
 internal sealed unsafe class SdlAudioOutput : IDisposable
 {
-    private readonly AudioEngine _engine;
+    private volatile AudioEngine _engine;
     private readonly GCHandle _self;
     private SDL_AudioStream* _stream;
     private float[] _buffer = new float[4096];
@@ -38,6 +38,13 @@ internal sealed unsafe class SdlAudioOutput : IDisposable
         }
 
         SDL_ResumeAudioStreamDevice(_stream);
+    }
+
+    /// <summary>Plays another session's audio engine from the next callback on (app switch).</summary>
+    public AudioEngine Engine
+    {
+        get => _engine;
+        set => _engine = value;
     }
 
     public void Dispose()

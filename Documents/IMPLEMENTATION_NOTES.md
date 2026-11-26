@@ -566,3 +566,41 @@ structs, which the VM does not support; C# 12 uses arrays.
   converts float ↔ bits by arithmetic only (the VM has no reinterpret instruction); NaN becomes 0x7FC00000.
 - HelloSquare keeps its launch count and best all-gems time in the `save/progress` entry, and from the second
   launch scatters the gems over free spots with `DeterministicRandom(launch number)`.
+
+## Editors-1 — the ZTX16 environment and the Console
+
+- **System apps are cartridges.** The Console (and later the editors) are C# projects in `apps/`, built by
+  `ztx16c` like any cartridge and shipped in `system/` next to `ZTX16.exe` (the host build copies them there).
+  The host gives exactly these apps the authoring capabilities; cartridges never get them.
+- **Authoring capabilities = named syscalls** (SDK namespace `ZTX16.Authoring`): `Workspace` (virtual file tree),
+  `Projects` (is_project, create, build, output, last_cartridge, extract, run) and `Apps` (count, name, launch,
+  request, message, back, version). They are implemented for every session (the "every SDK syscall is
+  implemented" check still holds) but are added to the syscall table only of a session with an
+  `AuthoringContext`; a cartridge importing them fails to link (`LinkException`).
+- **Workspace** (`Platform.Authoring.Workspace`): one host directory (default `Documents/ZTX16`, `--workspace`)
+  seen as `/…` paths; `.`/`..`, drive letters, backslashes and invalid names are rejected, everything resolves
+  inside the root. User-caused problems are results (error text, null, false), never exceptions; writes go
+  through a temporary file.
+- **AppEnvironment** (`Platform.Authoring`): the Console and editors are persistent sessions; at most one user
+  cartridge runs; one app is active (input, ticks, rendering, audio). Switches requested during a tick happen
+  after it. A cartridge that exits or fails returns to the app that ran it (a failure message is queued for it,
+  `Apps.Message`); a failing system app is closed; the Console exiting or failing ends the environment. F12
+  (host) returns to the Console, stopping a running cartridge.
+- **Project tools in the host**: the host references the toolchain (`ProjectTools`: Create, Build, Extract) and
+  builds in-process with Roslyn. `ZTX16.exe --build <project>` builds without the .NET SDK. For the single-file
+  executable, `tools/publish.ps1` ships `core/` and reference assemblies in `ref/` (CoreLib, System.Runtime,
+  ZTX16.Sdk), which the toolchain uses when bundled assemblies have no location.
+- **Text input**: `Input.GetText()` (characters typed this tick, from SDL text input events, following the
+  keyboard layout) and `Input.WasKeyTyped(key)` (pressed or auto-repeated). Both are queued and applied at the
+  start of the tick like all input.
+- **Core `Strings`**: Sub, IndexOf, LastIndexOf, Contains, StartsWith/EndsWith, Trim, ToLower/ToUpper,
+  EqualsIgnoreCase, Split, Words (quotes group words), Join, Replace, PadLeft/PadRight, Repeat, TryParseInt —
+  built on the VM's string primitives (length, indexing, comparison, concatenation). VM limitation noted:
+  `string.Empty` and other BCL fields are not supported (use `""`).
+- **Console** (`apps/Console`): 32×32 text screen, line editing (cursor, Home/End, Backspace/Delete with
+  repeat), command history (Up/Down), Tab path completion, scrolling (PgUp/PgDn, wheel). Commands: DIR/LS,
+  CD, MD, RD [/S], DEL, REN/MOVE, COPY, TYPE, NEW, BUILD, RUN (project directory or .ztx), EXTRACT, EDIT
+  (launches the editor for the file type when installed), APPS, DO (script: one command per line, `#`
+  comments, no nesting; `.zcmd`), ECHO, VER, CLS, HELP, EXIT. Typing a `.ztx` or `.zcmd` name runs it.
+- **Booting**: `ZTX16.exe` without a cartridge starts the environment when `system/console.ztx` exists (else the
+  file picker, as before); with a cartridge it runs just that cartridge.

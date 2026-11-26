@@ -134,6 +134,17 @@ public static class Input
     [Syscall("input.key_released")]
     public static bool WasKeyReleased(Key key) => throw new NotInVmException();
 
+    /// <summary>True if the key was pressed or auto-repeated this tick (for text editing: Backspace, arrows, …).</summary>
+    [Syscall("input.key_typed")]
+    public static bool WasKeyTyped(Key key) => throw new NotInVmException();
+
+    /// <summary>
+    /// Text typed this tick, following the host keyboard layout (empty if none). Characters outside the ZTX16
+    /// character set are delivered too; the built-in font draws them as '?'.
+    /// </summary>
+    [Syscall("input.text")]
+    public static string GetText() => throw new NotInVmException();
+
     /// <summary>Mouse X in display pixels.</summary>
     public static int MouseX
     {

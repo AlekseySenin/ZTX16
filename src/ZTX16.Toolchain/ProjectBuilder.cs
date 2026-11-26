@@ -94,10 +94,20 @@ public static class ProjectBuilder
 
     private static MetadataReference[] References()
     {
-        string[] trusted = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator);
+        // In a single-file host the bundled assemblies have no location; tools/publish.ps1 then ships copies in ref/.
+        string refDirectory = Path.Combine(AppContext.BaseDirectory, "ref");
+#pragma warning disable IL3000 // Empty in a single-file host: handled just below.
+        string sdk = typeof(SyscallAttribute).Assembly.Location;
+#pragma warning restore IL3000
+        if (string.IsNullOrEmpty(sdk) && Directory.Exists(refDirectory))
+        {
+            return Directory.GetFiles(refDirectory, "*.dll").Select(p => (MetadataReference)MetadataReference.CreateFromFile(p)).ToArray();
+        }
+
+        string[] trusted = ((string?)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") ?? string.Empty).Split(Path.PathSeparator);
         return trusted
             .Where(p => Path.GetFileName(p) is "System.Private.CoreLib.dll" or "System.Runtime.dll")
-            .Append(typeof(SyscallAttribute).Assembly.Location)
+            .Append(sdk)
             .Select(p => (MetadataReference)MetadataReference.CreateFromFile(p))
             .ToArray();
     }

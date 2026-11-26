@@ -35,6 +35,9 @@ public sealed class RuntimeSession
     /// <summary>Audio hardware.</summary>
     public AudioEngine Audio { get; }
 
+    /// <summary>Authoring capabilities: set only for system apps of the environment (Console, editors).</summary>
+    public Authoring.AuthoringContext? Authoring { get; internal set; }
+
     /// <summary>Persistent Storage of the running cartridge (its Game ID namespace).</summary>
     public Storage.StorageSystem Storage { get; }
 

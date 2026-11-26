@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The ZTX16 Console: a system app (shell and file manager). Built into console.ztx like any cartridge;
+       the host gives it the authoring capabilities because it ships in the host's system/ folder. -->
+  <PropertyGroup>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>console</AssemblyName>
+  </PropertyGroup>
+  <Import Project="../../src/ZTX16.Toolchain/build/ZTX16.Cartridge.targets" />
+</Project>

@@ -403,9 +403,13 @@ public class SdkAbiTests
     public void EverySdkSyscallIsImplementedByThePlatform()
     {
         // PlatformSyscalls.Create throws if any SDK syscall lacks an implementation.
+        // A cartridge's table holds every SDK syscall except the authoring ones (system apps only).
         var session = new RuntimeSession(new NullProgram(), 48000);
         SyscallTable table = PlatformSyscalls.Create(session);
-        Assert.Equal(Abi.SdkAbi.Syscalls.Count, table.Definitions.Count());
+        int authoring = Abi.SdkAbi.Syscalls.Keys.Count(AuthoringSyscalls.IsAuthoring);
+        Assert.True(authoring > 20);
+        Assert.Equal(Abi.SdkAbi.Syscalls.Count - authoring, table.Definitions.Count());
+        Assert.DoesNotContain(table.Definitions, d => AuthoringSyscalls.IsAuthoring(d.Name));
     }
 
     private sealed class NullProgram : IRuntimeProgram
