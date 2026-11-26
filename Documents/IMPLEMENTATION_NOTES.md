@@ -671,8 +671,8 @@ structs, which the VM does not support; C# 12 uses arrays.
   E enum member, V event, K keyword, C constant).
 - Completion behaviour (follow-up): the popup opens by itself from the **first character** of a word (classes,
   fields, methods, locals in scope), immediately after `.`, or with Ctrl+Space (any length). **Tab or a mouse
-  click** inserts the proposal; Up/Down/PgUp/PgDn choose, the wheel scrolls the list; **Enter keeps its meaning**
-  (a new line) and only closes the popup; Esc closes it. After Esc, Enter or accepting, the automatic popup stays
+  click** inserts the proposal — and so does **Enter** (it then starts no new line); Up/Down/PgUp/PgDn choose,
+  the wheel scrolls the list; Esc closes it. After Esc or accepting, the automatic popup stays
   closed only for that word (its line and start column), so the next word opens it again. The word being typed is
   never proposed to itself (it can parse as a declaration, e.g. `Inp Gra`). Find: F3 next, F2 or Shift+F3
   previous (Shift+Enter in the find bar); the host leaves F2 to the editor when the editor is active.

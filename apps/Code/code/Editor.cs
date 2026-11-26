@@ -10,7 +10,7 @@ namespace ZTX16Code;
 /// </summary>
 /// <remarks>
 /// Keys: Ctrl+O explorer, Ctrl+S save, Ctrl+Shift+S save as, Ctrl+N new, F6 compile, F5 compile and run,
-/// Ctrl+L log, Ctrl+F find (F3 next, F2 or Shift+F3 previous), Ctrl+Z/Ctrl+Y undo/redo, Ctrl+A/C/X/V, Tab/Shift+Tab indent,
+/// Completion: Tab, Enter or a click inserts. Ctrl+L log, Ctrl+F find (F3 next, F2 or Shift+F3 previous), Ctrl+Z/Ctrl+Y undo/redo, Ctrl+A/C/X/V, Tab/Shift+Tab indent,
 /// Esc closes a panel or returns to the Console. Host keys: F1 Console, F2 this editor.
 /// </remarks>
 public sealed class Editor : ICartridge
@@ -475,17 +475,11 @@ public sealed class Editor : ICartridge
             used = true;
         }
 
-        if (Input.WasKeyPressed(Key.Tab))
+        if (Input.WasKeyPressed(Key.Tab) || Input.WasKeyPressed(Key.Enter) || Input.WasKeyPressed(Key.KeypadEnter))
         {
+            // Tab and Enter insert the selected proposal (Enter then does not start a new line).
             AcceptCompletion();
             used = true;
-        }
-
-        if (Input.WasKeyPressed(Key.Enter) || Input.WasKeyPressed(Key.KeypadEnter))
-        {
-            // Enter keeps its meaning (a new line); it only closes the popup.
-            CloseCompletion();
-            SuppressCompletion();
         }
 
         if (Input.WasKeyPressed(Key.Escape))
@@ -698,7 +692,7 @@ public sealed class Editor : ICartridge
             }
         }
 
-        if (Input.WasKeyTyped(Key.Enter) || Input.WasKeyTyped(Key.KeypadEnter))
+        if ((Input.WasKeyTyped(Key.Enter) || Input.WasKeyTyped(Key.KeypadEnter)) && !popup)
         {
             _doc.NewLine();
         }

@@ -616,12 +616,13 @@ public class CompletionAndBracketTests
         env.Press(Key.Enter);
         env.Text("Inp");
         Assert.True(env.TickUntil(() => PopupRow(env) >= 0));
-        env.Press(Key.Enter);                               // closes the popup, new line
+        env.Press(Key.Enter);                               // inserts "Input" and closes the popup
         Assert.Equal(-1, PopupRow(env));
+        env.Press(Key.Enter);                               // a new line
         env.Text("Gra");
         Assert.True(env.TickUntil(() => PopupRow(env) >= 0), "the next word must open the popup again");
-        env.Press(Key.Tab);
-        Assert.Equal("Inp", Line(env, 15).Trim());
+        env.Press(Key.Enter);
+        Assert.Equal("Input", Line(env, 15).Trim());
         Assert.Equal("Graphics", Line(env, 16).Trim());
     }
 
@@ -641,7 +642,7 @@ public class CompletionAndBracketTests
     }
 
     [Fact]
-    public void EnterClosesThePopupAndStartsANewLine()
+    public void EnterInsertsTheProposalLikeTab()
     {
         using EnvironmentDriver env = Start();
         env.Press(Key.Down);
@@ -649,7 +650,10 @@ public class CompletionAndBracketTests
         Assert.True(env.TickUntil(() => PopupRow(env) >= 0));
         env.Press(Key.Enter);
         Assert.Equal(-1, PopupRow(env));
-        Assert.Equal("Inp", Line(env, 1));
+        Assert.Equal("Input", Line(env, 1));                // inserted, no new line
+        Assert.StartsWith("///", Line(env, 2));
+
+        env.Press(Key.Enter);                               // without a popup Enter starts a new line
         Assert.Equal("", Line(env, 2).Trim());
     }
 
