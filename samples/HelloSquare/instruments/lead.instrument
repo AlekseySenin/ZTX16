@@ -1,0 +1,1 @@
+{ "waveform": "sine", "volume": 0.16, "adsr": [0.04, 0.3, 0.7, 0.25], "lfo2": { "pitch": 0.25 } }

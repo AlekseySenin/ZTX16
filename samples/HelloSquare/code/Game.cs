@@ -10,7 +10,7 @@ namespace HelloSquare;
 /// (collision) and gems it collects. Sound uses the low-level audio hardware: a chime per gem (Synth square), a thud
 /// on walls (Synth noise), an engine hum while moving (Wavetable with LFO vibrato through a low-pass filter) and a
 /// fanfare Sample for the last gem, with a little global reverb. Space toggles the background layer, P cycles
-/// through the Palette resources, C shows the colliders, M mutes, Escape exits.
+/// through the Palette resources, C shows the colliders, M toggles the music, Escape exits.
 /// </summary>
 public sealed class Game : ICartridge
 {
@@ -38,12 +38,13 @@ public sealed class Game : ICartridge
     private bool showColliders;
     private bool touching;
 
-    // Audio channels.
-    private const int ChimeChannel = 0;
-    private const int ThudChannel = 1;
-    private const int FanfareChannel = 6;
-    private const int HumChannel = 7;
-    private bool muted;
+    // Sound: voices for the effects (channels 0–1, 6, 7) and the background song (channels 2–4).
+    private Voice? chime;
+    private Voice? thud;
+    private Voice? hum;
+    private Voice? fanfare;
+    private SongPlayback? music;
+    private bool musicOn = true;
     private bool humming;
     private int chimeTicks;
 
@@ -95,46 +96,35 @@ public sealed class Game : ICartridge
         SetUpAudio();
     }
 
-    private static void SetUpAudio()
+    private void SetUpAudio()
     {
         Audio.SetMasterVolume(0.8f);
 
-        // Gem chime: a short square blip, the envelope only on volume.
-        Audio.SetWaveform(ChimeChannel, Waveform.Square);
-        Audio.SetVolume(ChimeChannel, 0.25f);
-        Audio.SetAdsr(ChimeChannel, 0f, 0.25f, 0f, 0.05f);
-
-        // Wall thud: low noise with a fast decay, slightly to the left.
-        Audio.SetWaveform(ThudChannel, Waveform.Noise);
-        Audio.SetFrequency(ThudChannel, 1200f);
-        Audio.SetVolume(ThudChannel, 0.35f);
-        Audio.SetAdsr(ThudChannel, 0f, 0.08f, 0f, 0f);
-
-        // Engine hum: a wavetable, LFO 1 adds vibrato, Filter 1 is an insert low-pass on its channel.
-        if (Resources.Exists(ResourceType.Wavetable, "hum"))
-        {
-            Audio.UseWavetable(HumChannel, "hum");
-            Audio.SetFrequency(HumChannel, 55f);
-            Audio.SetVolume(HumChannel, 0.5f);
-            Audio.SetAdsr(HumChannel, 0.15f, 0f, 1f, 0.3f);
-            Audio.SetLfo(0, LfoWaveform.Triangle, 6f);
-            Audio.RouteLfo(0, HumChannel, ModulationDestination.Pitch, 0.4f);
-            Audio.SetFilter(0, FilterMode.LowPass, 500f, 0.3f);
-            Audio.AssignProcessor(ProcessorUnit.Filter1, HumChannel);
-        }
-
-        // Fanfare: a one-shot Sample.
-        if (Resources.Exists(ResourceType.Sample, "fanfare"))
-        {
-            Audio.UseSample(FanfareChannel, "fanfare");
-            Audio.SetVolume(FanfareChannel, 0.7f);
-            Audio.SetAdsr(FanfareChannel, 0f, 0f, 1f, 0.2f);
-        }
-
-        // A little reverb on everything.
+        // Shared processing is the game's job: LFO 1 gives the hum its vibrato (the instrument asks for the
+        // amount), Filter 1 is an insert low-pass on the hum's channel, FX 1 a little reverb on everything.
+        // The song sets up LFO 2 and Filter 2 itself.
+        Audio.SetLfo(0, LfoWaveform.Triangle, 6f);
+        Audio.SetFilter(0, FilterMode.LowPass, 500f, 0.3f);
+        Audio.AssignProcessor(ProcessorUnit.Filter1, 7);
         Audio.SetEffect(0, EffectType.Reverb, 0.6f, 0.5f, 0.2f);
         Audio.AssignProcessor(ProcessorUnit.Fx1, Audio.Global);
+
+        // Effects use their own channel groups, so they never steal the song's channels 2–5.
+        var effects = new ChannelGroup(new int[] { 0, 1 });
+        chime = VoiceFor("chime", effects);
+        thud = VoiceFor("thud", effects);
+        hum = VoiceFor("hum", new ChannelGroup(new int[] { 7 }));
+        fanfare = VoiceFor("fanfare", new ChannelGroup(new int[] { 6 }));
+
+        if (Resources.Exists(ResourceType.Song, "theme"))
+        {
+            music = new SongPlayback(Song.Load("theme"));
+            music.Play();
+        }
     }
+
+    private static Voice? VoiceFor(string instrument, ChannelGroup group) =>
+        Resources.Exists(ResourceType.Instrument, instrument) ? new Voice(Instrument.Load(instrument), group) : null;
 
     public void Tick()
     {
@@ -160,10 +150,17 @@ public sealed class Game : ICartridge
             showColliders = !showColliders;
         }
 
-        if (Input.WasKeyPressed(Key.M))
+        if (Input.WasKeyPressed(Key.M) && music is not null)
         {
-            muted = !muted;
-            Audio.SetMasterVolume(muted ? 0f : 0.8f);
+            musicOn = !musicOn;
+            if (musicOn)
+            {
+                music.Play();
+            }
+            else
+            {
+                music.Stop();
+            }
         }
 
         int dx = Horizontal(), dy = Vertical();
@@ -182,31 +179,31 @@ public sealed class Game : ICartridge
         touching = hitX.Hit || hitY.Hit;
         if (touching && !wasTouching)
         {
-            Audio.NoteOn(ThudChannel);
+            thud?.PlayPitch(1200f);
         }
 
         bool moving = dx != 0 || dy != 0;
-        if (moving != humming)
+        if (moving != humming && hum is not null)
         {
             humming = moving;
             if (moving)
             {
-                Audio.NoteOn(HumChannel);
+                hum.Play(33);           // A1, 55 Hz
             }
             else
             {
-                Audio.NoteOff(HumChannel);
+                hum.ReleaseNote();
             }
         }
 
         engine?.Update();
+        music?.Update();
         CollectGems();
 
         // The chime's second, higher note follows four ticks after the first.
         if (chimeTicks > 0 && --chimeTicks == 0)
         {
-            Audio.SetFrequency(ChimeChannel, 1318.5f);
-            Audio.NoteOn(ChimeChannel);
+            chime?.Play(88);         // E6
         }
 
         // The ship points up at 0°; rotation is counter-clockwise.
@@ -275,7 +272,7 @@ public sealed class Game : ICartridge
 
 
         Text.Draw(Hud, "T+" + (Machine.TickCount / 60).ToString(), 200, 242, 4, "");
-        Text.Draw(Hud, "P palette C colliders M mute", 16, 6, 4, "");
+        Text.Draw(Hud, "P palette C colliders M music", 16, 6, 4, "");
     }
 
     // A gem the ship overlaps disappears: its actor is hidden and loses its collider.
@@ -296,12 +293,11 @@ public sealed class Game : ICartridge
                 gem.Visible = false;
                 gem.Collider = null;
                 gemsCollected++;
-                Audio.SetFrequency(ChimeChannel, 987.8f);
-                Audio.NoteOn(ChimeChannel);
+                chime?.Play(83);         // B5, then E6 four ticks later
                 chimeTicks = 4;
                 if (gemsCollected == gems.ActorCount)
                 {
-                    Audio.NoteOn(FanfareChannel);
+                    fanfare?.Play(60);   // the sample at its own pitch
                 }
             }
         }

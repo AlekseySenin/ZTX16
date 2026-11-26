@@ -471,4 +471,47 @@ structs, which the VM does not support; C# 12 uses arrays.
   `{ "samples": [64 integers −128..127] }`; cartridge 64 bytes.
 - HelloSquare: gem chime (square, two notes), wall thud (noise), engine hum while moving (wavetable + LFO
   vibrato + insert low-pass), fanfare sample for the last gem, global reverb; M mutes (master volume 0).
-- Not yet: the high-level model (Instrument, Voice, allocator, Sequence, Song).
+- The high-level model (Instrument, Voice, allocator, Sequence, Song) is Audio-2, below.
+
+## Audio-2 — instruments, voices, sequences and songs
+
+- All of it is Core library code (`Music.cs`) on top of the Audio-1 syscalls. Instrument, Sequence and Song
+  resources reach it as flat value streams through `data.value_count/value/float_value/string(type, name, …)`
+  (`ValueStream`, layouts in `InstrumentFormat`, `SequenceFormat`, `SongFormat`).
+- **Instrument** (`.instrument`): exactly one source (`waveform`, `sample` or `wavetable`), volume, pan, ADSR,
+  ADSR destination and amount, desired LFO 1/2 amounts for pitch and volume, and for samples loop, rate and
+  `baseNote`. It never configures LFOs, filters or FX themselves. Synth instruments use channels 0–5, the
+  others 6–7. Notes: MIDI numbers (C4 = 60, A4 = 69 = 440 Hz, equal temperament); a sample plays at `rate`
+  on `baseNote` and is transposed by semitone ratios.
+- **ChannelGroup**: eligible channels in preference order (one kind only) and a `StealPolicy` — `ByOrder`
+  (default), `Oldest` (earliest current sound start), `Quietest` (lowest effective volume).
+  `ChannelGroup.Synth()` and `ChannelGroup.Samplers()` are the full sets.
+- **Voice**: `Play(note)`, `PlayPitch(hz or rate)`, `ReleaseNote`, `Stop`, `SetVolume`/`SetPan` overrides,
+  `StealLock`, `Channel`, `IsPlaying`. Allocation: a free channel first; otherwise the policy chooses among
+  channels not held by a sounding steal-locked voice. **If every candidate is locked, `Play` returns false and
+  nothing sounds** (the lock is never broken). A voice keeps its channel while nobody takes it, so repeated
+  notes retrigger the same channel without reconfiguring; a newly acquired channel is fully reconfigured from
+  the instrument. A sound started during the current tick counts as sounding although the hardware applies it
+  at the Audio Update.
+- **Sequence** (`.sequence`): instrument, `ticksPerBeat`, default `bpm`, `loop`, events `[note, length]`,
+  `[note, length, gate]` (gate 1..length, default length), `["rest", length]`, `{ "volume": factor }`.
+  Strictly monophonic. **SequencePlayback** drives one Voice: `TimeScale` = Sequence Ticks per runtime tick,
+  `SetBpm(bpm)` = `bpm × ticksPerBeat / 3600`. Each `Update` first runs the events due at the current position,
+  then advances; NoteOff at `start + gate` comes before a note starting at the same time. `Finished` is true
+  for one update; `Stop` releases the held note. Polyphony = several playbacks.
+- **Song** (`.song`): `ticksPerBeat`, `bpm`, `length`, `loop` and timed events — sequence → physical channel
+  (null clears it), LFO settings, LFO → channel route, LFO → processor route, filter and effect settings with
+  optional assignment. The build checks that sequences exist and that their instrument kind matches the
+  channel. **SongPlayback** (`Play`, `Stop`, `Update`, `TimeScale`/`SetBpm`, `Controls(channel)`,
+  `Finished`) drives the named channels directly, without the allocator. Sequences inside a song follow the
+  song's tempo, each in its own `ticksPerBeat`.
+- **Stealing a song channel.** A song channel counts as occupied (never free) for the allocator, so voices
+  take it only by stealing. While stolen the song has no control: its timeline continues, missed events are
+  not replayed. When the stealing voice's sound has ended the song takes the channel back at its next update
+  and restores the sequence's instrument; LFO/filter/FX settings stay as they are. The song never steals back
+  from a sounding voice.
+- Mixing the low-level `Audio` calls with voices on the same channels is the game's responsibility: give
+  effects and music separate channel groups.
+- HelloSquare: effects are voices (chime and thud share channels 0–1, hum on 7, fanfare on 6); a looping
+  three-part song (bass, arpeggio through Filter 2 with an LFO 2 wah, lead with LFO 2 vibrato) plays on
+  channels 2–4; M toggles it.

@@ -112,6 +112,9 @@ public static class ProjectBuilder
         ResourceType.Level => LevelFormat.Encode(LevelFormat.ParseJson(File.ReadAllText(resource.FullPath), resource.RelativePath)),
         ResourceType.Sample => SampleFormat.Encode(SampleFormat.FromWav(File.ReadAllBytes(resource.FullPath), resource.RelativePath)),
         ResourceType.Wavetable => WavetableFormat.Encode(WavetableFormat.ParseJson(File.ReadAllText(resource.FullPath), resource.RelativePath)),
+        ResourceType.Instrument => InstrumentFormat.Encode(InstrumentFormat.ParseJson(File.ReadAllText(resource.FullPath), resource.RelativePath)),
+        ResourceType.Sequence => SequenceFormat.Encode(SequenceFormat.ParseJson(File.ReadAllText(resource.FullPath), resource.RelativePath)),
+        ResourceType.Song => SongFormat.Encode(SongFormat.ParseJson(File.ReadAllText(resource.FullPath), resource.RelativePath)),
         _ => throw new ProjectException($"{resource.RelativePath}: {resource.Type} resources are not supported yet."),
     };
 
@@ -120,9 +123,60 @@ public static class ProjectBuilder
     {
         var tilemaps = resources.Where(r => r.Type == ResourceType.Tilemap).Select(r => r.Name).ToHashSet(StringComparer.Ordinal);
         var sprites = resources.Where(r => r.Type == ResourceType.Sprite).Select(r => r.Name).ToHashSet(StringComparer.Ordinal);
+        HashSet<string> Names(ResourceType type) => resources.Where(r => r.Type == type).Select(r => r.Name).ToHashSet(StringComparer.Ordinal);
+        HashSet<string> samples = Names(ResourceType.Sample), wavetables = Names(ResourceType.Wavetable);
+        Dictionary<string, InstrumentDefinition> instruments = resources.Where(r => r.Type == ResourceType.Instrument)
+            .ToDictionary(r => r.Name, r => InstrumentFormat.Decode(r.Data, r.Name), StringComparer.Ordinal);
+        Dictionary<string, SequenceDefinition> sequences = resources.Where(r => r.Type == ResourceType.Sequence)
+            .ToDictionary(r => r.Name, r => SequenceFormat.Decode(r.Data, r.Name), StringComparer.Ordinal);
         for (int i = 0; i < resources.Count; i++)
         {
             string file = project.Resources[i].RelativePath;
+            switch (resources[i].Type)
+            {
+                case ResourceType.Instrument:
+                {
+                    InstrumentDefinition instrument = instruments[resources[i].Name];
+                    HashSet<string>? pool = instrument.Source switch
+                    {
+                        InstrumentSourceKind.Sample => samples,
+                        InstrumentSourceKind.Wavetable => wavetables,
+                        _ => null,
+                    };
+                    if (pool is not null && !pool.Contains(instrument.Resource!))
+                    {
+                        throw new ProjectException($"{file}: {instrument.Source} resource '{instrument.Resource}' does not exist.");
+                    }
+
+                    continue;
+                }
+
+                case ResourceType.Sequence when !instruments.ContainsKey(sequences[resources[i].Name].Instrument):
+                    throw new ProjectException($"{file}: Instrument resource '{sequences[resources[i].Name].Instrument}' does not exist.");
+                case ResourceType.Song:
+                    foreach (SongEvent e in SongFormat.Decode(resources[i].Data, resources[i].Name).Events)
+                    {
+                        if (e.Kind != 0 || e.Name is null)
+                        {
+                            continue;
+                        }
+
+                        if (!sequences.TryGetValue(e.Name, out SequenceDefinition? sequence))
+                        {
+                            throw new ProjectException($"{file}: Sequence resource '{e.Name}' does not exist.");
+                        }
+
+                        bool synth = instruments[sequence.Instrument].Source == InstrumentSourceKind.Synth;
+                        if (synth != (e.P0 < 6))
+                        {
+                            throw new ProjectException($"{file}: sequence '{e.Name}' cannot play on channel {e.P0} "
+                                + "(Synth instruments use channels 0..5, Sample and Wavetable instruments 6..7).");
+                        }
+                    }
+
+                    continue;
+            }
+
             if (resources[i].Type == ResourceType.Level)
             {
                 foreach (LevelLayer layer in LevelFormat.Decode(resources[i].Data, resources[i].Name).Layers)

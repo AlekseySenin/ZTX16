@@ -1,0 +1,11 @@
+{
+  "ticksPerBeat": 4, "bpm": 110, "length": 64, "loop": true,
+  "events": [
+    { "at": 0, "lfo": 1, "waveform": "triangle", "hz": 5 },
+    { "at": 0, "filter": 1, "mode": "lowpass", "cutoff": 1500, "resonance": 0.35, "assign": 3 },
+    { "at": 0, "lfo": 1, "unit": "filter2", "parameter": 0, "amount": 10 },
+    { "at": 0, "channel": 2, "sequence": "bass" },
+    { "at": 0, "channel": 3, "sequence": "arp" },
+    { "at": 0, "channel": 4, "sequence": "lead" }
+  ]
+}

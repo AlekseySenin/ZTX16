@@ -466,7 +466,8 @@ public class SampleCartridgeTests
         Assert.Equal(11, session.Graphics.Layers[2].GetPixel(64, 128));
         Assert.Equal(0, session.Graphics.Layers[2].GetPixel(54, 128));
         Assert.NotEqual(0, session.Audio.GetChannelState(7));     // engine hum while moving
-        Assert.NotEqual(0, session.Audio.GetChannelState(1));     // wall thud (nothing rendered, so still in attack)
+        Assert.NotEqual(0, session.Audio.GetChannelState(0));     // wall thud: first free effects channel (nothing rendered, so still in attack)
+        Assert.NotEqual(0, session.Audio.GetChannelState(2));     // background song: bass
 
         // Back to x = 120, then down over gem5 at (120, 20): it disappears from the Sprites layer.
         session.Input.Enqueue(Platform.Input.InputEvent.KeyChange(Key.Left, false));
@@ -478,7 +479,7 @@ public class SampleCartridgeTests
         session.Input.Enqueue(Platform.Input.InputEvent.KeyChange(Key.Down, true));
         RunTicks(session, 70);
         Assert.Equal(0, session.Graphics.Layers[2].GetPixel(121, 24));
-        Assert.NotEqual(0, session.Audio.GetChannelState(0));     // gem chime
+        Assert.NotEqual(0, session.Audio.GetChannelState(1));     // gem chime: channel 0 still holds the thud
         var pcm = new float[4800];
         session.Audio.Render(pcm);
         Assert.Contains(pcm, s => s != 0);

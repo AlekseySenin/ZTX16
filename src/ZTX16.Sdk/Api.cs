@@ -445,6 +445,29 @@ public static class Audio
 }
 
 /// <summary>
+/// Instrument, Sequence and Song resources in their flat runtime form (32-bit values and a string table).
+/// Use <c>Instrument.Load</c>, <c>Sequence.Load</c> and <c>Song.Load</c>, which decode them.
+/// </summary>
+public static class ResourceData
+{
+    /// <summary>Number of values in the resource stream.</summary>
+    [Syscall("data.value_count")]
+    public static int ValueCount(ResourceType type, string name) => throw new NotInVmException();
+
+    /// <summary>A value of the stream as an integer.</summary>
+    [Syscall("data.value")]
+    public static int Value(ResourceType type, string name, int index) => throw new NotInVmException();
+
+    /// <summary>A value of the stream reinterpreted as a float.</summary>
+    [Syscall("data.float_value")]
+    public static float FloatValue(ResourceType type, string name, int index) => throw new NotInVmException();
+
+    /// <summary>An entry of the resource's string table.</summary>
+    [Syscall("data.string")]
+    public static string String(ResourceType type, string name, int index) => throw new NotInVmException();
+}
+
+/// <summary>
 /// Level resources in their flat runtime form (32-bit values and a string table). Use <c>Level.Load</c>,
 /// which decodes them into layers and actors.
 /// </summary>

@@ -17,6 +17,7 @@ public sealed class ResourceStore
     private readonly Dictionary<string, LevelStream> _levels = new(StringComparer.Ordinal);
     private readonly Dictionary<string, sbyte[]> _samples = new(StringComparer.Ordinal);
     private readonly Dictionary<string, sbyte[]> _wavetables = new(StringComparer.Ordinal);
+    private readonly Dictionary<(ResourceType, string), ValueStream> _streams = new();
     private readonly Dictionary<string, Graphics.RuntimeFont> _fonts = new(StringComparer.Ordinal);
 
     /// <summary>Creates a store from cartridge resources.</summary>
@@ -122,6 +123,33 @@ public sealed class ResourceStore
         sbyte[] table = WavetableFormat.Decode(data, name);
         _wavetables[name] = table;
         return table;
+    }
+
+    /// <summary>An Instrument, Sequence or Song resource in its runtime stream form (validated on first use).</summary>
+    /// <exception cref="ArgumentException">The resource does not exist or its type has no value stream.</exception>
+    public ValueStream Stream(ResourceType type, string name)
+    {
+        if (type is not (ResourceType.Instrument or ResourceType.Sequence or ResourceType.Song))
+        {
+            throw new ArgumentException($"{type} resources have no value stream.");
+        }
+
+        if (_streams.TryGetValue((type, name), out ValueStream? cached))
+        {
+            return cached;
+        }
+
+        byte[] data = _data.GetValueOrDefault((type, name)) ?? throw new ArgumentException($"{type} resource '{name}' not found.");
+        string where = $"{type} '{name}'";
+        ValueStream stream = ValueStreamWriter.Decode(data, where);
+        _ = type switch
+        {
+            ResourceType.Instrument => (object)InstrumentFormat.FromStream(stream, where),
+            ResourceType.Sequence => SequenceFormat.FromStream(stream, where),
+            _ => SongFormat.FromStream(stream, where),
+        };
+        _streams[(type, name)] = stream;
+        return stream;
     }
 
     /// <summary>A Level resource in its runtime stream form.</summary>

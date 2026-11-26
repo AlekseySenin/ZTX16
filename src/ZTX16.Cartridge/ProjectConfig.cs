@@ -189,6 +189,9 @@ public static class ResourceTypes
         ResourceType.Level => ".level",
         ResourceType.Sample => ".wav",
         ResourceType.Wavetable => ".wavetable",
+        ResourceType.Instrument => ".instrument",
+        ResourceType.Sequence => ".sequence",
+        ResourceType.Song => ".song",
         _ => null,
     };
 }

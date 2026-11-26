@@ -187,6 +187,19 @@ internal static class PlatformSyscalls
         Bind("audio.adsr_value", a => FromF32(audio.GetAdsrValue(ToI32(a[0]))));
         BindWithContext("audio.sample_length", (c, a) => resources.Sample(Name(c, a[0])).Length);
 
+        // Instrument, Sequence and Song value streams (decoded by the Core library)
+        BindWithContext("data.value_count", (c, a) => resources.Stream(Type(a[0]), Name(c, a[1])).Data.Length);
+        BindWithContext("data.value", (c, a) => StreamValue(c, a));
+        BindWithContext("data.float_value", (c, a) => FromF32(BitConverter.Int32BitsToSingle(StreamValue(c, a))));
+        BindWithContext("data.string", (c, a) =>
+        {
+            string[] strings = resources.Stream(Type(a[0]), Name(c, a[1])).Strings;
+            int index = ToI32(a[2]);
+            return (uint)index < (uint)strings.Length
+                ? c.NewString(strings[index])
+                : throw new ArgumentOutOfRangeException(nameof(a), index, $"The resource has {strings.Length} strings.");
+        });
+
         // Levels: the flat stream the Core library decodes (LevelFormat documents the layout)
         BindWithContext("level.value_count", (c, a) => resources.Level(Name(c, a[0])).Data.Length);
         BindWithContext("level.value", (c, a) => LevelValue(c, a));
@@ -272,6 +285,16 @@ internal static class PlatformSyscalls
             int flags = ToI32(a[first]);
             return new DrawTransform((flags & 1) != 0, (flags & 2) != 0, ToF32(a[first + 1]), ToF32(a[first + 2]), ToF32(a[first + 3]),
                 ToF32(a[first + 4]), ToF32(a[first + 5]));
+        }
+
+        // (type, name, index) arguments of the data value syscalls
+        int StreamValue(ISyscallContext c, ReadOnlySpan<long> a)
+        {
+            int[] data = resources.Stream(Type(a[0]), Name(c, a[1])).Data;
+            int index = ToI32(a[2]);
+            return (uint)index < (uint)data.Length
+                ? data[index]
+                : throw new ArgumentOutOfRangeException(nameof(a), index, $"The resource has {data.Length} values.");
         }
 
         // (name, index) arguments of the level value syscalls
