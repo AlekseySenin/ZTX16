@@ -126,7 +126,7 @@ static int RunEnvironment(HostOptions options, string systemDirectory)
         var environment = new AppEnvironment(new Workspace(workspaceRoot), new HostProjectTools(), apps,
             name => Load(Path.Combine(systemDirectory, name + CartridgeFile.Extension)), Load, SdlHost.SampleRate);
         using var host = new SdlHost(options, "ZTX16");
-        return host.RunEnvironment(environment);
+        return host.RunEnvironment(environment, options.Edit);
     }
     catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidOperationException or VmTrapException
         or LinkException or CartridgeFormatException or ExecutableFormatException or VerificationException)
@@ -155,13 +155,13 @@ namespace ZTX16.Host
     }
 
     /// <summary>Command-line options of the reference host.</summary>
-    internal sealed record HostOptions(int Scale, bool Fullscreen, HostProgram Program, string? ExecutablePath, string? Workspace = null)
+    internal sealed record HostOptions(int Scale, bool Fullscreen, HostProgram Program, string? ExecutablePath, string? Workspace = null, string? Edit = null)
     {
         public const int MinScale = 1;
         public const int MaxScale = 8;
 
         private const string Usage =
-            "Usage: ZTX16 [--scale N] [--fullscreen] [--workspace <dir>] [<file.ztx | file.ztxe> | --exe <file> | --vm-demo | --diagnostic]";
+            "Usage: ZTX16 [--scale N] [--fullscreen] [--workspace <dir>] [--edit <workspace path>] [<file.ztx | file.ztxe> | --exe <file> | --vm-demo | --diagnostic]";
 
         public static HostOptions Parse(string[] args)
         {
@@ -170,6 +170,7 @@ namespace ZTX16.Host
             HostProgram program = HostProgram.Picker;
             string? executable = null;
             string? workspace = null;
+            string? edit = null;
 
             for (int i = 0; i < args.Length; i++)
             {
@@ -187,6 +188,9 @@ namespace ZTX16.Host
                         break;
                     case "--vm-demo":
                         program = HostProgram.VmDemo;
+                        break;
+                    case "--edit" when i + 1 < args.Length:
+                        edit = args[++i];
                         break;
                     case "--workspace" when i + 1 < args.Length:
                         workspace = args[++i];
@@ -213,7 +217,7 @@ namespace ZTX16.Host
                 throw new ArgumentException($"Scale must be {MinScale}..{MaxScale}. {Usage}");
             }
 
-            return new HostOptions(scale, fullscreen, program, executable, workspace);
+            return new HostOptions(scale, fullscreen, program, executable, workspace, edit);
         }
     }
 }

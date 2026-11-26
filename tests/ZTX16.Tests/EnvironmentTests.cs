@@ -79,6 +79,9 @@ public class AuthoringCapabilityTests
 /// <summary>Runs the environment headless like the host loop does: tick the active app, then AfterTick.</summary>
 internal sealed class EnvironmentDriver : IDisposable
 {
+    private static readonly Lazy<byte[]> CodeCartridge = new(() =>
+        CartridgeFile.Write(ProjectBuilder.Build(Path.Combine(CartridgeCompiler.RepositoryRoot, "apps", "Code"), ProjectFixtures.CoreDirectory)));
+
     private static readonly Lazy<byte[]> ConsoleCartridge = new(() =>
         CartridgeFile.Write(ProjectBuilder.Build(Path.Combine(CartridgeCompiler.RepositoryRoot, "apps", "Console"), ProjectFixtures.CoreDirectory)));
 
@@ -87,7 +90,8 @@ internal sealed class EnvironmentDriver : IDisposable
     public EnvironmentDriver()
     {
         Workspace = new Workspace(Path.Combine(_root.Path, "workspace"));
-        Environment = new AppEnvironment(Workspace, new Tools(), ["console"], _ => Load(ConsoleCartridge.Value), path => Load(File.ReadAllBytes(path)), 48000);
+        Environment = new AppEnvironment(Workspace, new Tools(), ["code", "console"],
+            name => Load(name == "code" ? CodeCartridge.Value : ConsoleCartridge.Value), path => Load(File.ReadAllBytes(path)), 48000);
         Environment.Start();
     }
 
@@ -124,6 +128,36 @@ internal sealed class EnvironmentDriver : IDisposable
         input.Enqueue(InputEvent.KeyChange(Key.Enter, true));
         Tick();
         input.Enqueue(InputEvent.KeyChange(Key.Enter, false));
+        Tick();
+    }
+
+    /// <summary>Types text into the active app (no Enter).</summary>
+    public void Text(string text)
+    {
+        Active.Session.Input.Enqueue(InputEvent.TextTyped(text));
+        Tick();
+    }
+
+    /// <summary>Presses and releases a key, optionally with Ctrl and/or Shift held.</summary>
+    public void Press(Key key, bool ctrl = false, bool shift = false)
+    {
+        InputSystem input = Active.Session.Input;
+        if (ctrl)
+        {
+            input.Enqueue(InputEvent.KeyChange(Key.LeftControl, true));
+        }
+
+        if (shift)
+        {
+            input.Enqueue(InputEvent.KeyChange(Key.LeftShift, true));
+        }
+
+        input.Enqueue(InputEvent.KeyChange(key, true));
+        Tick();
+        input = Active.Session.Input;
+        input.Enqueue(InputEvent.KeyChange(key, false));
+        input.Enqueue(InputEvent.KeyChange(Key.LeftControl, false));
+        input.Enqueue(InputEvent.KeyChange(Key.LeftShift, false));
         Tick();
     }
 
@@ -204,7 +238,10 @@ public class ConsoleEnvironmentTests
 
         env.Type("dir");
         env.Type("type setup.zcmd");
-        env.Type("edit setup.zcmd");                       // no code editor yet: stays in the Console
+        env.Type("edit setup.zcmd");                       // opens the code editor
+        Assert.Equal("code", env.Active.Name);
+        env.Press(Key.Escape);                             // back to the Console
+        Assert.Equal("console", env.Active.Name);
         env.Type("nonsense command");
         Assert.Equal("console", env.Active.Name);
         env.Tick(10);
@@ -237,5 +274,115 @@ public class ConsoleEnvironmentTests
         using var env = new EnvironmentDriver();
         env.Type("exit");
         Assert.Null(env.Environment.Active);
+    }
+}
+
+public class CodeEditorTests
+{
+    private static EnvironmentDriver StartWithProject()
+    {
+        var env = new EnvironmentDriver();
+        env.Type("new Game");
+        env.Type("edit /Game/code/Game.cs");
+        Assert.Equal("code", env.Active.Name);
+        return env;
+    }
+
+    private static int Pixel(EnvironmentDriver env, int x, int y) => env.Active.Session.Graphics.Layers[0].GetPixel(x, y);
+
+    [Fact]
+    public void TypesSavesAndCopies()
+    {
+        using EnvironmentDriver env = StartWithProject();
+        string original = env.Workspace.ReadText("/Game/code/Game.cs")!;
+
+        env.Text("// written in ZTX16");
+        env.Press(Key.Enter);
+        env.Press(Key.S, ctrl: true);
+        string saved = env.Workspace.ReadText("/Game/code/Game.cs")!;
+        Assert.Equal("// written in ZTX16\n" + original.Replace("\r", ""), saved);
+
+        env.Press(Key.A, ctrl: true);
+        env.Press(Key.C, ctrl: true);
+        Assert.Equal(saved, env.Environment.Clipboard.GetText());
+
+        // Undo removes the typing (two steps: the line break and the text).
+        env.Press(Key.Z, ctrl: true);
+        env.Press(Key.Z, ctrl: true);
+        env.Press(Key.S, ctrl: true);
+        Assert.Equal(original.Replace("\r", ""), env.Workspace.ReadText("/Game/code/Game.cs"));
+    }
+
+    [Fact]
+    public void CompileErrorsOpenTheLog()
+    {
+        using EnvironmentDriver env = StartWithProject();
+        Assert.Equal(0, Pixel(env, 250, 30));              // no log panel yet
+        env.Press(Key.A, ctrl: true);
+        env.Text("public sealed class Game : ZTX16.ICartridge { void Broken( }");
+        env.Press(Key.F6);                                 // compile (saves first)
+        Assert.Contains("Broken(", env.Workspace.ReadText("/Game/code/Game.cs"));
+        Assert.Equal(1, Pixel(env, 250, 30));              // the log panel is shown
+        Assert.Equal(7, Pixel(env, 13, 240));              // line number 1 in the gutter is red: the error is there
+    }
+
+    [Fact]
+    public void SwitchingFilesAsksToSaveUnsavedChanges()
+    {
+        using EnvironmentDriver env = StartWithProject();
+        env.Workspace.WriteText("/Game/code/Other.cs", "// other");
+        string original = env.Workspace.ReadText("/Game/code/Game.cs")!;
+
+        // N: the change is discarded and the other file opens.
+        env.Text("// change one");
+        env.Press(Key.Escape);                             // to the Console (the editor keeps its state)
+        env.Type("edit /Game/code/Other.cs");
+        Assert.Equal("code", env.Active.Name);
+        Assert.Equal(20, Pixel(env, 100, 108));            // "Save this file?" dialog
+        env.Text("n");
+        Assert.Equal(original, env.Workspace.ReadText("/Game/code/Game.cs"));
+        Assert.NotEqual(20, Pixel(env, 100, 108));
+
+        // Esc cancels: still on Other.cs with its change.
+        env.Text("// change two");
+        env.Press(Key.Escape);
+        env.Type("edit /Game/code/Game.cs");
+        Assert.Equal(20, Pixel(env, 100, 108));
+        env.Press(Key.Escape);
+        Assert.Equal("// other", env.Workspace.ReadText("/Game/code/Other.cs"));
+
+        // Y: saved, then switched.
+        env.Press(Key.Escape);
+        env.Type("edit /Game/code/Game.cs");
+        env.Text("y");
+        Assert.Equal("// change two// other", env.Workspace.ReadText("/Game/code/Other.cs"));
+    }
+
+    [Fact]
+    public void RunStartsTheGameAndReturnsToTheEditor()
+    {
+        using EnvironmentDriver env = StartWithProject();
+        env.Press(Key.F5);
+        Assert.False(env.Active.IsSystem);
+        env.Active.Session.Input.Enqueue(Platform.Input.InputEvent.KeyChange(Key.Escape, true));
+        env.Tick(2);
+        Assert.Equal("code", env.Active.Name);             // the game's launcher
+    }
+
+    [Fact]
+    public void SaveAsAndNew()
+    {
+        using EnvironmentDriver env = StartWithProject();
+        env.Press(Key.N, ctrl: true);                      // new, nothing to save
+        env.Text("// fresh file");
+        env.Press(Key.S, ctrl: true);                      // untitled: asks for a name
+        for (int i = 0; i < 40; i++)
+        {
+            env.Press(Key.Backspace);
+        }
+
+        env.Text("/Game/code/Fresh.cs");
+        env.Press(Key.Enter);
+        Assert.Equal("// fresh file", env.Workspace.ReadText("/Game/code/Fresh.cs"));
     }
 }

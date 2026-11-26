@@ -189,6 +189,22 @@ internal static class PlatformSyscalls
         Bind("audio.adsr_value", a => FromF32(audio.GetAdsrValue(ToI32(a[0]))));
         BindWithContext("audio.sample_length", (c, a) => resources.Sample(Name(c, a[0])).Length);
 
+        // String primitives
+        BindWithContext("string.substring", (c, a) =>
+        {
+            string text = Text(c, a[0]);
+            int start = ToI32(a[1]), length = ToI32(a[2]);
+            return start >= 0 && length >= 0 && start <= text.Length - length
+                ? c.NewString(text.Substring(start, length))
+                : throw new ArgumentOutOfRangeException(nameof(a), $"Substring({start}, {length}) is outside a string of length {text.Length}.");
+        });
+        BindWithContext("string.index_of", (c, a) =>
+        {
+            string text = Text(c, a[0]);
+            int start = Math.Clamp(ToI32(a[2]), 0, text.Length);
+            return text.IndexOf(Text(c, a[1]), start, StringComparison.Ordinal);
+        });
+
         // Storage (the session's Game ID namespace)
         Storage.StorageSystem storage = session.Storage;
         BindWithContext("storage.write", (c, a) =>

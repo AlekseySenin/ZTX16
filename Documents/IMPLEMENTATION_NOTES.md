@@ -604,3 +604,30 @@ structs, which the VM does not support; C# 12 uses arrays.
   comments, no nesting; `.zcmd`), ECHO, VER, CLS, HELP, EXIT. Typing a `.ztx` or `.zcmd` name runs it.
 - **Booting**: `ZTX16.exe` without a cartridge starts the environment when `system/console.ztx` exists (else the
   file picker, as before); with a cartridge it runs just that cartridge.
+
+## Editors-2 — the code editor (IDE)
+
+- `apps/Code` (system app `code`): toolbar **EXPLORER · SAVE · SAVE AS · NEW · COMPILE · LOG · FIND · RUN** over a
+  C# editor. Opened from the Console with `EDIT <file>` (.cs, .json, .zcmd, .txt) or `ZTX16.exe --edit <path>`.
+- Text: 3×5-pixel `small` font (advance 4, line height 7; a Font resource in the app), 59 columns × up to 33
+  rows, line-number gutter, current-line highlight, horizontal scrolling. Syntax colouring (keywords, built-in
+  types, strings/chars incl. verbatim, comments incl. block comments across lines, numbers, preprocessor) is
+  cached per line and rebuilt only from the first changed line.
+- Editing: typing, Enter with auto-indent (one level deeper after `{`, `}` dedents), Backspace removes a whole
+  indentation level, Tab/Shift+Tab (indent/outdent selected lines), selection with Shift and mouse drag,
+  Ctrl+A/C/X/V on the host clipboard, Ctrl+Z/Ctrl+Y (snapshot undo, typing grouped), Ctrl+arrows by word,
+  Home (smart), Ctrl+Home/End, PgUp/PgDn, wheel.
+- Files: EXPLORER browses the workspace (directories, projects marked [P], .cs/.json/.zcmd/.txt/.md; bin/obj
+  hidden; Enter/double-click opens, Backspace goes up). Opening another file (Explorer, Log, Console EDIT)
+  while the current one has unsaved changes shows **"Save this file?" Y/N** (Esc cancels; Y on an untitled file
+  asks for a name first). SAVE AS / an untitled SAVE ask for a workspace path; NEW starts an untitled file;
+  EDIT of a missing file starts it empty under that name.
+- COMPILE (F6) saves, builds the project that contains the file and parses the compiler output
+  (`file(line,col): error|warning CODE: text`) into the LOG panel (errors red, warnings yellow; click jumps to
+  the place, opening the file if needed); problem lines are marked in the gutter and their message is shown in
+  the status bar. RUN (F5) compiles and runs the cartridge; it returns to the editor when it ends.
+  FIND (Ctrl+F; Enter/F3 next) searches case-insensitively, wrapping, and selects the match.
+- Platform additions: compiler **warnings** of the project's own code are now part of the build output (and
+  of the error report); `string.substring` / `string.index_of` syscalls make `Strings.Sub`/`IndexOf` single
+  allocations; the host clipboard for system apps (`Apps.GetClipboard`/`SetClipboard`, `IClipboard`, SDL in the
+  host, in-memory otherwise); the build output shows workspace paths instead of host paths.

@@ -100,6 +100,8 @@ internal static class AuthoringSyscalls
         });
         bind("apps.message", (c, _) => c.NewString(context!.App.Messages.TryDequeue(out string? message) ? message : string.Empty));
         bind("apps.back", (_, _) => { Env().Back(context!.App); return 0; });
+        bind("apps.get_clipboard", (c, _) => c.NewString(Env().Clipboard.GetText()));
+        bind("apps.set_clipboard", (c, a) => { Env().Clipboard.SetText(Text(c, a[0])); return 0; });
         bind("apps.version", (c, _) => c.NewString("ZTX16 " + (typeof(AppEnvironment).Assembly.GetName().Version?.ToString(3) ?? "0.0.0")));
 
         bool Build(string path)
@@ -115,8 +117,9 @@ internal static class AuthoringSyscalls
             try
             {
                 (string cartridge, string message) = Env().Tools.Build(dir);
-                context.LastOutput = message;
-                context.LastCartridge = Ws().ToVirtual(cartridge) ?? string.Empty;
+                string virtualCartridge = Ws().ToVirtual(cartridge) ?? string.Empty;
+                context.LastOutput = virtualCartridge.Length > 0 ? message.Replace(cartridge, virtualCartridge, StringComparison.OrdinalIgnoreCase) : message;
+                context.LastCartridge = virtualCartridge;
                 return true;
             }
             catch (Exception e) when (e is not OutOfMemoryException)

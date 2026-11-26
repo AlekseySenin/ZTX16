@@ -28,12 +28,14 @@ public static class ProjectTools
     /// <exception cref="TranslationException">The code uses something the VM does not support.</exception>
     public static (string Path, string Message) Build(string projectDirectory, string? output = null, string? coreDirectory = null)
     {
-        CartridgeContent cartridge = ProjectBuilder.Build(projectDirectory, coreDirectory);
+        var warnings = new List<string>();
+        CartridgeContent cartridge = ProjectBuilder.Build(projectDirectory, coreDirectory, warnings);
         output ??= Path.Combine(Path.GetFullPath(projectDirectory), "bin", SafeFileName(cartridge.Config.Name) + CartridgeFile.Extension);
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output))!);
         byte[] bytes = CartridgeFile.Write(cartridge);
         File.WriteAllBytes(output, bytes);
-        return (output, $"{cartridge.Config.Name} -> {output} ({bytes.Length} bytes; {cartridge.Resources.Count} resources, {cartridge.Sources.Count} sources)");
+        string summary = $"{cartridge.Config.Name} -> {output} ({bytes.Length} bytes; {cartridge.Resources.Count} resources, {cartridge.Sources.Count} sources)";
+        return (output, warnings.Count == 0 ? summary : summary + Environment.NewLine + string.Join(Environment.NewLine, warnings));
     }
 
     /// <summary>Extracts a cartridge into a project directory. Returns a message.</summary>

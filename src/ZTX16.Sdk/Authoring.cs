@@ -123,6 +123,14 @@ public static class Apps
     [Syscall("apps.back")]
     public static void Back() => throw new NotInVmException();
 
+    /// <summary>The host clipboard text ("" if none).</summary>
+    [Syscall("apps.get_clipboard")]
+    public static string GetClipboard() => throw new NotInVmException();
+
+    /// <summary>Puts text on the host clipboard.</summary>
+    [Syscall("apps.set_clipboard")]
+    public static void SetClipboard(string text) => throw new NotInVmException();
+
     /// <summary>The environment's version text.</summary>
     [Syscall("apps.version")]
     public static string Version() => throw new NotInVmException();

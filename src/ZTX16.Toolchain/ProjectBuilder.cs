@@ -32,7 +32,10 @@ public static class ProjectBuilder
     /// <exception cref="ProjectException">The project or a resource file is invalid.</exception>
     /// <exception cref="BuildException">The C# code does not compile.</exception>
     /// <exception cref="TranslationException">The code uses features the ZTX16 toolchain does not support.</exception>
-    public static CartridgeContent Build(string projectRoot, string? coreDirectory = null)
+    public static CartridgeContent Build(string projectRoot, string? coreDirectory = null) => Build(projectRoot, coreDirectory, null);
+
+    /// <summary>Like <see cref="Build(string, string?)"/>, also collecting compiler warnings in the project's own code.</summary>
+    public static CartridgeContent Build(string projectRoot, string? coreDirectory, List<string>? warnings)
     {
         Project project = Project.Open(projectRoot);
         if (project.Sources.Count == 0)
@@ -40,7 +43,7 @@ public static class ProjectBuilder
             throw new ProjectException($"No C# sources found in '{project.Config.Directories[ProjectConfig.CodeCategory]}/'.");
         }
 
-        byte[] il = Compile(project, coreDirectory ?? DefaultCoreDirectory);
+        byte[] il = Compile(project, coreDirectory ?? DefaultCoreDirectory, warnings);
         byte[] executable = IlTranslator.TranslateToExecutable(il);
 
         var resources = project.Resources
@@ -54,7 +57,7 @@ public static class ProjectBuilder
         return new CartridgeContent(project.ConfigJson, executable, resources, sources);
     }
 
-    private static byte[] Compile(Project project, string coreDirectory)
+    private static byte[] Compile(Project project, string coreDirectory, List<string>? warnings)
     {
         if (!Directory.Exists(coreDirectory))
         {
@@ -81,12 +84,16 @@ public static class ProjectBuilder
 
         using var stream = new MemoryStream();
         var result = compilation.Emit(stream);
+        IEnumerable<string> projectWarnings = result.Diagnostics
+            .Where(d => d.Severity == DiagnosticSeverity.Warning && !d.IsSuppressed && d.Location.SourceTree?.FilePath.StartsWith("<core>", StringComparison.Ordinal) == false)
+            .Select(d => d.ToString());
+        warnings?.AddRange(projectWarnings);
         if (!result.Success)
         {
             IEnumerable<string> errors = result.Diagnostics
                 .Where(d => d.Severity == DiagnosticSeverity.Error)
                 .Select(d => d.ToString());
-            throw new BuildException(string.Join(Environment.NewLine, errors));
+            throw new BuildException(string.Join(Environment.NewLine, errors.Concat(projectWarnings)));
         }
 
         return stream.ToArray();

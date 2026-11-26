@@ -27,6 +27,7 @@
     <ProjectReference Include="..\ZTX16.Toolchain\ZTX16.Toolchain.csproj" />
     <!-- System apps: built as cartridges before the host, then copied into system/. -->
     <ProjectReference Include="..\..\apps\Console\Console.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\..\apps\Code\Code.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
   <Target Name="CopySystemApps" AfterTargets="Build">
     <ItemGroup>

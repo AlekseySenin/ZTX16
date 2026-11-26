@@ -548,3 +548,15 @@ public static class Levels
     [Syscall("level.string")]
     public static string String(string level, int index) => throw new NotInVmException();
 }
+
+/// <summary>Fast string primitives for the core library (<c>Strings</c>); prefer <c>Strings</c> in game code.</summary>
+public static class StringOps
+{
+    /// <summary>The <paramref name="length"/> characters starting at <paramref name="start"/>.</summary>
+    [Syscall("string.substring")]
+    public static string Substring(string text, int start, int length) => throw new NotInVmException();
+
+    /// <summary>Index of <paramref name="value"/> at or after <paramref name="start"/> (ordinal), or −1.</summary>
+    [Syscall("string.index_of")]
+    public static int IndexOf(string text, string value, int start) => throw new NotInVmException();
+}

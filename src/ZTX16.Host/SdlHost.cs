@@ -51,12 +51,18 @@ internal sealed unsafe class SdlHost : IDisposable
     /// Runs the ZTX16 environment (Console and editors, plus cartridges they start) until the Console exits or
     /// the window closes. F12 returns to the Console.
     /// </summary>
-    public int RunEnvironment(ZTX16.Platform.Authoring.AppEnvironment environment)
+    public int RunEnvironment(ZTX16.Platform.Authoring.AppEnvironment environment, string? edit = null)
     {
         CreateWindowAndRenderer();
         _environment = environment;
+        environment.Clipboard = new SdlClipboard();
         environment.AppFailed += (app, message) => Console.Error.WriteLine($"ZTX16: {app.Name} failed: {message}");
         environment.Start();
+        if (edit is not null && environment.Active is { } shell)
+        {
+            environment.Launch(shell, "code", edit);
+            environment.AfterTick();
+        }
 
         ZTX16.Platform.Authoring.AppSession? bound = null;
         var warned = new HashSet<RuntimeSession>();

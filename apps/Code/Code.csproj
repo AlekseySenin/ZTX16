@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The ZTX16 code editor (IDE): a system app, built into code.ztx and shipped in the host's system/ folder. -->
+  <PropertyGroup>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>code</AssemblyName>
+  </PropertyGroup>
+  <Import Project="../../src/ZTX16.Toolchain/build/ZTX16.Cartridge.targets" />
+</Project>

@@ -46,7 +46,7 @@ powershell -ExecutionPolicy Bypass -File tools/publish.ps1
 
 This produces `dist/ZTX16/ZTX16.exe` — one self-contained file (the .NET runtime and SDL3 inside, nothing to install) — and `dist/ZTX16/cartridges/` with the sample cartridges. Copy the folder anywhere. Then:
 
-- **double-click `ZTX16.exe`**: boots into the ZTX16 Console (type HELP): create, build and run projects in your workspace (`Documents\ZTX16`); F12 returns from a running game;
+- **double-click `ZTX16.exe`**: boots into the ZTX16 Console (type HELP; `EDIT file.cs` opens the code editor): create, build and run projects in your workspace (`Documents\ZTX16`); F12 returns from a running game;
 - **drag a `.ztx` onto `ZTX16.exe`**, or use **Open with → ZTX16.exe** on a `.ztx` file (tick "always" to make `.ztx` files open with a double-click);
 - from a terminal: `ZTX16.exe game.ztx [--scale N] [--fullscreen]` — messages appear in that terminal.
 

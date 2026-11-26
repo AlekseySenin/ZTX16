@@ -19,6 +19,28 @@ public interface IProjectTools
     bool IsProject(string directory);
 }
 
+/// <summary>The host clipboard (text), offered to system apps only.</summary>
+public interface IClipboard
+{
+    /// <summary>The clipboard text ("" if none).</summary>
+    string GetText();
+
+    /// <summary>Replaces the clipboard text.</summary>
+    void SetText(string text);
+}
+
+/// <summary>A clipboard kept in memory (tests, hosts without one).</summary>
+public sealed class MemoryClipboard : IClipboard
+{
+    private string _text = string.Empty;
+
+    /// <inheritdoc />
+    public string GetText() => _text;
+
+    /// <inheritdoc />
+    public void SetText(string text) => _text = text;
+}
+
 /// <summary>A program ready to run: its code, resources, window title and storage.</summary>
 public sealed record LoadedProgram(IRuntimeProgram Program, ResourceStore Resources, string Title, StorageSystem Storage);
 
@@ -104,6 +126,9 @@ public sealed class AppEnvironment
 
     /// <summary>Names of the available system apps.</summary>
     public IReadOnlyList<string> SystemApps { get; }
+
+    /// <summary>The clipboard system apps read and write (in memory unless the host provides its own).</summary>
+    public IClipboard Clipboard { get; set; } = new MemoryClipboard();
 
     /// <summary>The active app, or null once the environment has ended.</summary>
     public AppSession? Active { get; private set; }

@@ -22,13 +22,7 @@ public static class Strings
             return text;
         }
 
-        string[] parts = new string[length];
-        for (int i = 0; i < length; i++)
-        {
-            parts[i] = text[start + i].ToString();
-        }
-
-        return string.Concat(parts);
+        return StringOps.Substring(text, start, length);
     }
 
     /// <summary>The characters of <paramref name="text"/> from <paramref name="start"/> to the end.</summary>
@@ -69,15 +63,12 @@ public static class Strings
     /// <summary>Index of the first occurrence of <paramref name="value"/> at or after <paramref name="start"/>, or −1.</summary>
     public static int IndexOf(string text, string value, int start = 0)
     {
-        for (int i = start < 0 ? 0 : start; i + value.Length <= text.Length; i++)
+        if (start > text.Length)
         {
-            if (At(text, i, value))
-            {
-                return i;
-            }
+            return -1;
         }
 
-        return -1;
+        return StringOps.IndexOf(text, value, start < 0 ? 0 : start);
     }
 
     /// <summary>Index of the last <paramref name="c"/>, or −1.</summary>
