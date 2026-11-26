@@ -79,6 +79,7 @@ Diagnostic program: arrows / WASD / D-pad / left stick move the square (its heig
 - `src/ZTX16.Toolchain` — `ztx16c` (new / build / extract / translate), IL → ZTX16 translator, cartridge build targets.
 - `src/ZTX16.Host` — SDL3 reference host (`ZTX16.exe`).
 - `apps/Console` — the ZTX16 Console (system app: shell, file manager, project workflow).
+- `apps/Code` — the ZTX16 code editor (system app: C# editing, compile with errors and warnings, run).
 - `tools/publish.ps1` — publishes the single-file `ZTX16.exe` with the system apps, build support and sample cartridges to `dist/`.
 - `samples/` — example cartridges.
 - `tests/ZTX16.Tests` — unit, VM, toolchain and differential tests.
