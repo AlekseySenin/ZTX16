@@ -102,6 +102,7 @@ public sealed class Editor : ICartridge
     private bool _hasSelection;
     private int _selX, _selY, _selWidth, _selHeight;
     private int _selAnchorX = -1, _selAnchorY;
+    private bool _deselecting;
     private byte[] _clip = new byte[0];
     private int _clipWidth, _clipHeight;
     private bool _pasting;
@@ -471,15 +472,24 @@ public sealed class Editor : ICartridge
 
         if (_tool == ToolSelect)
         {
-            if (leftPressed && inside)
+            if (leftPressed || rightPressed)
             {
-                _selAnchorX = px;
-                _selAnchorY = py;
+                // A click deselects; with nothing selected it also anchors a new selection.
+                _deselecting = _hasSelection;
                 _hasSelection = false;
+                _selAnchorX = leftPressed && inside ? px : -1;
+                _selAnchorY = py;
             }
             else if (left && _selAnchorX >= 0)
             {
                 int cx = Clamp(px, ox, ox + w - 1), cy = Clamp(py, oy, oy + h - 1);
+                if (_deselecting && cx == _selAnchorX && cy == _selAnchorY)
+                {
+                    // The deselecting click starts a new selection only once it is dragged.
+                    return;
+                }
+
+                _deselecting = false;
                 _selX = Min(_selAnchorX, cx);
                 _selY = Min(_selAnchorY, cy);
                 _selWidth = Abs(cx - _selAnchorX) + 1;

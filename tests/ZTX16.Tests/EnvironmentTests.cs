@@ -210,12 +210,12 @@ internal sealed class EnvironmentDriver : IDisposable
     public FakeDialogs Dialogs { get; } = new();
 
     /// <summary>Clicks at (x, y) with a mouse button (press and release on separate ticks).</summary>
-    public void Click(int x, int y, MouseButton button = MouseButton.Left)
+    public void Click(int x, int y, MouseButton button = MouseButton.Left, int holdTicks = 1)
     {
         InputSystem input = Active.Session.Input;
         input.Enqueue(InputEvent.MouseMoved(x, y));
         input.Enqueue(InputEvent.MouseButtonChange(button, true));
-        Tick();
+        Tick(holdTicks);
         input = Active.Session.Input;
         input.Enqueue(InputEvent.MouseButtonChange(button, false));
         Tick();

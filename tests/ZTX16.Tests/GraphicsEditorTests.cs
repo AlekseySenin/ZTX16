@@ -295,6 +295,39 @@ public class GraphicsEditorTests
     }
 
     [Fact]
+    public void ClickWithTheSelectToolDeselects()
+    {
+        var pixels = new byte[65536];
+        Array.Fill(pixels, (byte)7);
+        using EnvironmentDriver env = Start(pixels);
+        env.Press(Key.S);
+        env.Drag(At(1, 1).X, At(1, 1).Y, At(2, 2).X, At(2, 2).Y);   // select 2×2 pixels
+        env.Click(At(10, 10).X, At(10, 10).Y, holdTicks: 6);        // a real click lasts several ticks
+        env.Press(Key.Delete);                                      // nothing selected: clears the region
+        Save(env);
+        byte[] saved = ReadPixels(env, "/Art/tilemaps/art.png");
+        Assert.Equal(0, Pixel(saved, 10, 10));
+        Assert.Equal(0, Pixel(saved, 15, 15));
+        Assert.Equal(7, Pixel(saved, 16, 0));                       // outside the region
+    }
+
+    [Fact]
+    public void SelectionClearsOnlyTheSelectedPixels()
+    {
+        var pixels = new byte[65536];
+        Array.Fill(pixels, (byte)7);
+        using EnvironmentDriver env = Start(pixels);
+        env.Press(Key.S);
+        env.Drag(At(1, 1).X, At(1, 1).Y, At(2, 2).X, At(2, 2).Y);
+        env.Press(Key.Delete);
+        Save(env);
+        byte[] saved = ReadPixels(env, "/Art/tilemaps/art.png");
+        Assert.Equal(0, Pixel(saved, 1, 1));
+        Assert.Equal(0, Pixel(saved, 2, 2));
+        Assert.Equal(7, Pixel(saved, 3, 3));
+    }
+
+    [Fact]
     public void SquareBrushOfSizeThreeFillsTheSquare()
     {
         using EnvironmentDriver env = Start();
