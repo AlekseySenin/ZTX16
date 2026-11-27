@@ -79,6 +79,9 @@ public class AuthoringCapabilityTests
 /// <summary>Runs the environment headless like the host loop does: tick the active app, then AfterTick.</summary>
 internal sealed class EnvironmentDriver : IDisposable
 {
+    private static readonly Lazy<byte[]> HelpCartridge = new(() =>
+        CartridgeFile.Write(ProjectBuilder.Build(Path.Combine(CartridgeCompiler.RepositoryRoot, "apps", "Help"), ProjectFixtures.CoreDirectory)));
+
     private static readonly Lazy<byte[]> GraphicsCartridge = new(() =>
         CartridgeFile.Write(ProjectBuilder.Build(Path.Combine(CartridgeCompiler.RepositoryRoot, "apps", "Graphics"), ProjectFixtures.CoreDirectory)));
 
@@ -93,8 +96,8 @@ internal sealed class EnvironmentDriver : IDisposable
     public EnvironmentDriver()
     {
         Workspace = new Workspace(Path.Combine(_root.Path, "workspace"));
-        Environment = new AppEnvironment(Workspace, new Tools(), ["code", "console", "graphics"],
-            name => Load(name == "code" ? CodeCartridge.Value : name == "graphics" ? GraphicsCartridge.Value : ConsoleCartridge.Value),
+        Environment = new AppEnvironment(Workspace, new Tools(), ["code", "console", "graphics", "help"],
+            name => Load(name == "code" ? CodeCartridge.Value : name == "graphics" ? GraphicsCartridge.Value : name == "help" ? HelpCartridge.Value : ConsoleCartridge.Value),
             path => Load(File.ReadAllBytes(path)), 48000);
         Environment.Dialogs = Dialogs;
         Environment.CodeAnalysis = new TestCodeAnalysis();
@@ -193,6 +196,8 @@ internal sealed class EnvironmentDriver : IDisposable
                 r.Problems.Select(p => new CodeProblemInfo(p.Line, p.Column, p.EndLine, p.EndColumn, p.IsError, p.Id, p.Message)).ToList(),
                 r.Colors.Select(c => new CodeColorInfo(c.Line, c.Column, c.Length, (int)c.Kind)).ToList());
         }
+
+        public string ApiReference() => ZTX16.Toolchain.ApiReference.Generate(ProjectFixtures.CoreDirectory);
 
         public CodeCompletionInfo Complete(string projectDirectory, string file, string text, int line, int column)
         {
@@ -401,7 +406,7 @@ public class CodeEditorTests
         Assert.Equal(0, Pixel(env, 250, 30));              // no log panel yet
         env.Press(Key.A, ctrl: true);
         env.Text("public sealed class Game : ZTX16.ICartridge { void Broken( }");
-        env.Press(Key.F6);                                 // compile (saves first)
+        env.Press(Key.B, ctrl: true);                      // compile (saves first)
         Assert.Contains("Broken(", env.Workspace.ReadText("/Game/code/Game.cs"));
         Assert.Equal(1, Pixel(env, 250, 30));              // the log panel is shown
         Assert.Equal(7, Pixel(env, 13, 240));              // line number 1 in the gutter is red: the error is there
@@ -443,7 +448,7 @@ public class CodeEditorTests
     public void RunStartsTheGameAndReturnsToTheEditor()
     {
         using EnvironmentDriver env = StartWithProject();
-        env.Press(Key.F5);
+        env.Press(Key.F5, ctrl: true);                      // compile and run
         Assert.False(env.Active.IsSystem);
         env.Active.Session.Input.Enqueue(Platform.Input.InputEvent.KeyChange(Key.Escape, true));
         env.Tick(2);
@@ -673,14 +678,14 @@ public class CompletionAndBracketTests
     }
 
     [Fact]
-    public void FindNextWithF3AndPreviousWithF2()
+    public void FindNextWithCtrlF3AndPreviousWithCtrlShiftF3()
     {
         using EnvironmentDriver env = Start();
         env.Press(Key.F, ctrl: true);
         env.Text("Graphics");
         env.Press(Key.Enter);                               // first: line 14 "Graphics.UsePalette"
-        env.Press(Key.F3);                                  // next: line 15 "Graphics.Fill"
-        env.Press(Key.F2);                                  // previous: back to line 14
+        env.Press(Key.F3, ctrl: true);                      // next: line 15 "Graphics.Fill"
+        env.Press(Key.F3, ctrl: true, shift: true);         // previous: back to line 14
         env.Press(Key.Escape);                              // close the find bar; the match stays selected
         env.Text("X");                                      // replaces the selected match
         Assert.Equal("        X.UsePalette(\"default\");", Line(env, 13));
@@ -753,5 +758,74 @@ public class CompletionAndBracketTests
         Assert.Equal(27, Pixel(env, 18 + (1 * 4) + 3, y)); // '('
         Assert.Equal(27, Pixel(env, 18 + (5 * 4) + 3, y)); // the real ')' at column 5
         Assert.NotEqual(27, Pixel(env, 18 + (3 * 4) + 3, y));
+    }
+}
+
+public class HelpAndFunctionKeyTests
+{
+    private static int Pixel(EnvironmentDriver env, int x, int y) => env.Active.Session.Graphics.Layers[0].GetPixel(x, y);
+
+    // True if any pixel of a colour appears in a rectangle.
+    private static bool Shows(EnvironmentDriver env, int color, int x0, int y0, int x1, int y1)
+    {
+        for (int y = y0; y < y1; y++)
+        {
+            for (int x = x0; x < x1; x++)
+            {
+                if (Pixel(env, x, y) == color)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    [Fact]
+    public void HelpShowsTheReferenceAndSearches()
+    {
+        using var env = new EnvironmentDriver();
+        Assert.True(env.Environment.SwitchTo("help"));     // F1
+        env.Environment.AfterTick();
+        env.Tick(2);
+        Assert.Equal("help", env.Active.Name);
+        Assert.True(Shows(env, 15, 80, 230, 256, 245), "the selected type's title is shown");
+
+        env.Text("fillrect");                               // only Graphics has FillRect
+        env.Tick();
+        Assert.True(Shows(env, 17, 80, 200, 256, 245), "the matching member signature is shown");
+        env.Text("zzzz");                                   // nothing matches
+        env.Tick();
+        Assert.True(Shows(env, 3, 80, 220, 256, 245), "a 'nothing matches' note");
+        env.Press(Key.Escape);                              // clears the search
+        env.Press(Key.Escape);                              // back to the Console
+        Assert.Equal("console", env.Active.Name);
+    }
+
+    [Fact]
+    public void MissingAppsSendTheUserToTheConsoleWithANote()
+    {
+        using var env = new EnvironmentDriver();
+        env.Environment.SwitchTo("code");
+        env.Environment.AfterTick();
+        Assert.False(env.Environment.SwitchTo("sound"));   // F5: not installed yet
+        env.Environment.Notify("The sound editor is not installed yet.");
+        env.Environment.AfterTick();
+        Assert.Equal("console", env.Active.Name);
+    }
+}
+
+public class ApiReferenceTests
+{
+    [Fact]
+    public void ReferenceListsSdkAndCoreWithSummaries()
+    {
+        string text = ZTX16.Toolchain.ApiReference.Generate(ProjectFixtures.CoreDirectory);
+        Assert.Contains("T\tZTX16.Graphics\tstatic class\tGraphics: layers, display layers and the palette.", text);
+        Assert.Contains("M\tvoid Clear(int layer)\tClears a Graphics Layer to ColorIndex 0.", text);
+        Assert.Contains("T\tZTX16.DeterministicRandom\tclass\t", text);             // core library
+        Assert.Contains("M\tint Next(int min, int max)\t", text);
+        Assert.DoesNotContain("Intrinsics", text);                                   // hidden plumbing
     }
 }

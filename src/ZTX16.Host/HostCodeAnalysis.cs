@@ -14,6 +14,8 @@ internal sealed class HostCodeAnalysis : ICodeAnalysis
             result.Colors.Select(c => new CodeColorInfo(c.Line, c.Column, c.Length, (int)c.Kind)).ToList());
     }
 
+    public string ApiReference() => ZTX16.Toolchain.ApiReference.Generate();
+
     public CodeCompletionInfo Complete(string projectDirectory, string file, string text, int line, int column)
     {
         CodeCompletionResult result = CodeIntelligence.Complete(projectDirectory, file, text, line, column);

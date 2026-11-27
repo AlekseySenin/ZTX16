@@ -26,4 +26,7 @@ public interface ICodeAnalysis
 
     /// <summary>Completion proposals at a 0-based position.</summary>
     CodeCompletionInfo Complete(string projectDirectory, string file, string text, int line, int column);
+
+    /// <summary>The API reference for the Help app (see the toolchain's ApiReference for the format).</summary>
+    string ApiReference();
 }

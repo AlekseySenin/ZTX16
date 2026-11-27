@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The ZTX16 help app (F1): the API reference of the SDK and core library. A system app, built into help.ztx. -->
+  <PropertyGroup>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>help</AssemblyName>
+  </PropertyGroup>
+  <Import Project="../../src/ZTX16.Toolchain/build/ZTX16.Cartridge.targets" />
+</Project>

@@ -152,6 +152,7 @@ internal static class AuthoringSyscalls
             context.CompletionTask = Task.Run(() => analysis.Complete(dir, file, text, line, column));
             return 1;
         });
+        bind("code.reference", (c, _) => c.NewString(Env().CodeAnalysis?.ApiReference() ?? ""));
         bind("code.completion_ready", (_, _) =>
         {
             if (context!.CompletionTask is not { IsCompleted: true } task)

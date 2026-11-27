@@ -222,3 +222,14 @@ public static class Images
     [Syscall("images.error")]
     public static string Error() => throw new NotInVmException();
 }
+
+/// <summary>The API reference for the Help app.</summary>
+public static class Reference
+{
+    /// <summary>
+    /// Every public type and member of the ZTX16 SDK and core library: lines <c>T, type, kind, summary</c> followed by
+    /// <c>M, signature, summary</c> lines for its members (tab-separated).
+    /// </summary>
+    [Syscall("code.reference")]
+    public static string Text() => throw new NotInVmException();
+}

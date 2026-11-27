@@ -9,9 +9,9 @@ namespace ZTX16Code;
 /// syntax colouring, line numbers, selection, clipboard, undo, search and compiler errors shown in place.
 /// </summary>
 /// <remarks>
-/// Keys: Ctrl+O explorer, Ctrl+S save, Ctrl+Shift+S save as, Ctrl+N new, F6 compile, F5 compile and run,
-/// Completion: Tab, Enter or a click inserts. Ctrl+L log, Ctrl+F find (F3 next, F2 or Shift+F3 previous), Ctrl+Z/Ctrl+Y undo/redo, Ctrl+A/C/X/V, Tab/Shift+Tab indent,
-/// Esc closes a panel or returns to the Console. Host keys: F1 Console, F2 this editor.
+/// Keys: Ctrl+O explorer, Ctrl+S save, Ctrl+Shift+S save as, Ctrl+N new, Ctrl+B compile, Ctrl+F5 compile and run,
+/// Completion: Tab, Enter or a click inserts. Ctrl+L log, Ctrl+F find (Ctrl+F3 next, Ctrl+Shift+F3 previous), Ctrl+Z/Ctrl+Y undo/redo, Ctrl+A/C/X/V, Tab/Shift+Tab indent,
+/// Esc closes a panel or returns to the Console. Host keys: F1 help, F2 Console, F3 this editor, F4 graphics.
 /// </remarks>
 public sealed class Editor : ICartridge
 {
@@ -150,7 +150,7 @@ public sealed class Editor : ICartridge
             OpenFile(path);
         }
 
-        SetStatus("F1 console  F5 run  F6 compile  Ctrl+O open", InfoColor);
+        SetStatus("F1 help  F2 console  Ctrl+F5 run  Ctrl+B compile", InfoColor);
     }
 
     private const string DefaultFile = "/HelloWorld/code/Game.cs";
@@ -548,11 +548,11 @@ public sealed class Editor : ICartridge
         {
             NewFile();
         }
-        else if (Input.WasKeyPressed(Key.F6) || (ctrl && Input.WasKeyPressed(Key.B)))
+        else if (ctrl && Input.WasKeyPressed(Key.B))
         {
             Compile(false);
         }
-        else if (Input.WasKeyPressed(Key.F5))
+        else if (ctrl && Input.WasKeyPressed(Key.F5))
         {
             Compile(true);
         }
@@ -564,11 +564,11 @@ public sealed class Editor : ICartridge
         {
             OpenFind();
         }
-        else if (Input.WasKeyPressed(Key.F3) && !Shift())
+        else if (ctrl && Input.WasKeyPressed(Key.F3) && !Shift())
         {
             FindNext();
         }
-        else if (Input.WasKeyPressed(Key.F2) || (Input.WasKeyPressed(Key.F3) && Shift()))
+        else if (ctrl && Input.WasKeyPressed(Key.F3) && Shift())
         {
             FindPrevious();
         }
@@ -2147,7 +2147,7 @@ public sealed class Editor : ICartridge
             Graphics.FillRect(Layer, 2 + (text.Length * CharWidth), y + 2, 1, LineHeight - 1, Cursor);
         }
 
-        Text.Draw(Layer, "F3 next  F2 prev  Esc", Screen - (21 * CharWidth) - 2, y + 2, GutterText, Font);
+        Text.Draw(Layer, "Ctrl+F3 next  +Shift prev", Screen - (25 * CharWidth) - 2, y + 2, GutterText, Font);
     }
 
     private void DrawExplorer()

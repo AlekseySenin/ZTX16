@@ -405,8 +405,10 @@ public sealed class Shell : ICartridge
         Print(" APPS  VER  CLS  ECHO  EXIT", TextColor);
         Print("Keys: Tab completes, Up/Down", InfoColor);
         Print("history, PgUp/PgDn scroll,", InfoColor);
-        Print("F1 Console  F2 code editor", InfoColor);
-        Print("(also from a running game).", InfoColor);
+        Print("F1 help     F2 console", InfoColor);
+        Print("F3 code     F4 graphics", InfoColor);
+        Print("F5 sound    F6 fonts", InfoColor);
+        Print("(also out of a running game).", InfoColor);
     }
 
     private void Dir(string path)
@@ -526,7 +528,7 @@ public sealed class Shell : ICartridge
             return;
         }
 
-        Print("Running " + path + "  (F1 to return)", InfoColor);
+        Print("Running " + path + "  (F2 to return)", InfoColor);
     }
 
     private void EditFile(string path)

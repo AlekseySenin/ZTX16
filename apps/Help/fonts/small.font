@@ -1,0 +1,8 @@
+{
+  "tilemap": "small",
+  "glyphWidth": 1,
+  "glyphHeight": 1,
+  "lineHeight": 7,
+  "advance": 4,
+  "ranges": [ { "first": 32, "last": 126, "tile": 992 } ]
+}

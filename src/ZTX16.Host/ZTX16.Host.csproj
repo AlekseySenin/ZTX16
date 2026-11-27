@@ -29,6 +29,7 @@
     <ProjectReference Include="..\..\apps\Console\Console.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\..\apps\Code\Code.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\..\apps\Graphics\Graphics.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\..\apps\Help\Help.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
   <!-- Everything the environment needs is also embedded, so ZTX16.exe works alone: the system apps, the core
        library sources and the reference assemblies for building cartridges (unpacked on demand). -->
@@ -39,6 +40,8 @@
       <ZTX16EmbedRef Include="$(NetCoreRoot)shared\Microsoft.NETCore.App\$(BundledNETCoreAppPackageVersion)\System.Private.CoreLib.dll" />
       <ZTX16EmbedRef Include="$(NetCoreRoot)shared\Microsoft.NETCore.App\$(BundledNETCoreAppPackageVersion)\System.Runtime.dll" />
       <ZTX16EmbedRef Include="@(ReferencePath->WithMetadataValue('Filename', 'ZTX16.Sdk'))" />
+      <!-- The SDK's XML documentation: the Help app's API reference reads it. -->
+      <ZTX16EmbedRef Include="@(ReferencePath->WithMetadataValue('Filename', 'ZTX16.Sdk')->'%(RootDir)%(Directory)%(Filename).xml')" />
       <EmbeddedResource Include="@(ZTX16EmbedApp)" LogicalName="system/%(ZTX16EmbedApp.Filename)%(ZTX16EmbedApp.Extension)" />
       <EmbeddedResource Include="@(ZTX16EmbedCore)" LogicalName="core/%(ZTX16EmbedCore.Filename)%(ZTX16EmbedCore.Extension)" />
       <EmbeddedResource Include="@(ZTX16EmbedRef)" LogicalName="ref/%(ZTX16EmbedRef.Filename)%(ZTX16EmbedRef.Extension)" />

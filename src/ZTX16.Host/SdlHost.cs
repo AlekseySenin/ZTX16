@@ -318,6 +318,18 @@ internal sealed unsafe class SdlHost : IDisposable
         return true;
     }
 
+    // Switches to a system app; one that is not installed yet sends the user to the Console with a note.
+    private bool SwitchApp(string app, string description)
+    {
+        if (!_environment!.SwitchTo(app))
+        {
+            _environment.Notify("The " + description + " is not installed yet.");
+        }
+
+        _environment.AfterTick();
+        return true;
+    }
+
     private bool HandleHostHotkey(SDL_Scancode scancode)
     {
         switch (scancode)
@@ -327,17 +339,21 @@ internal sealed unsafe class SdlHost : IDisposable
                 SDL_SetWindowFullscreen(_window, _fullscreen);
                 return true;
 
+            // Function keys switch between the environment's apps (also out of a running cartridge):
+            // F1 help, F2 Console, F3 code editor, F4 graphics editor, F5 sound editor, F6 font editor.
             case SDL_Scancode.SDL_SCANCODE_F1 when _environment is not null:
+                return SwitchApp("help", "help (API reference)");
+            case SDL_Scancode.SDL_SCANCODE_F2 when _environment is not null:
             case SDL_Scancode.SDL_SCANCODE_F12 when _environment is not null:
-                _environment.SwitchTo(AppEnvironment.ShellApp);
-                _environment.AfterTick();
-                return true;
-
-            // In the code editor itself F2 belongs to the editor (find previous).
-            case SDL_Scancode.SDL_SCANCODE_F2 when _environment is not null && _environment.Active?.Name != "code":
-                _environment.SwitchTo("code");
-                _environment.AfterTick();
-                return true;
+                return SwitchApp(AppEnvironment.ShellApp, "Console");
+            case SDL_Scancode.SDL_SCANCODE_F3 when _environment is not null:
+                return SwitchApp("code", "code editor");
+            case SDL_Scancode.SDL_SCANCODE_F4 when _environment is not null:
+                return SwitchApp("graphics", "graphics editor");
+            case SDL_Scancode.SDL_SCANCODE_F5 when _environment is not null:
+                return SwitchApp("sound", "sound editor");
+            case SDL_Scancode.SDL_SCANCODE_F6 when _environment is not null:
+                return SwitchApp("font", "font editor");
 
             case SDL_Scancode.SDL_SCANCODE_F10 when !_fullscreen:
                 _scale = _scale >= 4 ? 1 : _scale + 1;

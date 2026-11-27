@@ -215,6 +215,13 @@ public sealed class AppEnvironment
         return string.Empty;
     }
 
+    /// <summary>Switches to the shell and tells it why (for example a system app that is not installed yet).</summary>
+    public void Notify(string message)
+    {
+        SwitchTo(ShellApp);
+        Shell?.Messages.Enqueue(message);
+    }
+
     /// <summary>Requests returning from <paramref name="app"/> to the app that launched it (or the shell).</summary>
     public void Back(AppSession app) => _next = app.Launcher ?? Shell ?? app;
 

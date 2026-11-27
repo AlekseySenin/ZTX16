@@ -13,7 +13,7 @@ namespace ZTX16Graphics;
 /// <remarks>
 /// Mouse: left button paints with the primary colour, right button with the secondary one. Keys: B brush,
 /// E eraser, F fill, I pipette, S select, Ctrl+C/X/V, Ctrl+Z/Y, Del clears, [ ] brush size, G grid, H/V flip,
-/// R rotate, Esc cancels, Ctrl+S save, Ctrl+O open. F1 Console, F2 code editor.
+/// R rotate, Esc cancels, Ctrl+S save, Ctrl+O open. Host keys: F1 help, F2 Console, F3 code editor, F4 this editor.
 /// </remarks>
 public sealed class Editor : ICartridge
 {

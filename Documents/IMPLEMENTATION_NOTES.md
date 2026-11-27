@@ -704,3 +704,19 @@ structs, which the VM does not support; C# 12 uses arrays.
   in a host dialog — any common PNG: grey, RGB, RGBA, indexed — mapped to the nearest palette colours, transparent →
   0; export to the chosen file) and `apps.open_dialog` / `apps.save_dialog` / `apps.dialog_state` / `apps.dialog_name`
   (SDL file dialogs; the app never sees host paths, only the chosen file's name). `PngImport` in the cartridge library.
+
+## Function keys and the help app
+
+- Host keys in the environment (also out of a running cartridge, which is then stopped): **F1 help**, **F2 Console**,
+  **F3 code editor**, **F4 graphics editor**, **F5 sound editor**, **F6 font editor** (F12 still = Console). A system
+  app that is not installed yet (sound, font) sends the user to the Console with a note (`AppEnvironment.Notify`).
+- The code editor's own keys moved off the function keys: **Ctrl+B** compile, **Ctrl+F5** compile and run,
+  **Ctrl+F3 / Ctrl+Shift+F3** find next / previous.
+- `apps/Help` (system app `help`, F1): the API reference — types on the left, the selected type with its members
+  (signature and summary, word-wrapped) on the right; typing filters types by name or by member name; wheel,
+  PgUp/PgDn scroll; Esc clears the search, then goes back.
+- `ZTX16.Toolchain.ApiReference` generates it with Roslyn from the core library sources and the SDK (its XML
+  documentation through a small `DocumentationProvider`): public `ZTX16.*` types and members (constructors, fields,
+  properties, events, methods), summaries as plain ASCII text; `[EditorBrowsable(Never)]` plumbing is hidden. Served
+  by `code.reference` (`ICodeAnalysis.ApiReference`); the host embeds `ZTX16.Sdk.xml` next to the reference
+  assemblies so the single-file executable has it too.
