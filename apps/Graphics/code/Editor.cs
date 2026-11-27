@@ -82,7 +82,7 @@ public sealed class Editor : ICartridge
     private bool _grid;
 
     // Main screen.
-    private int _zoom = 10;
+    private int _zoom = 9;                  // one 8×8 tile fits the 76-pixel-high main screen
     private int _mainScrollX, _mainScrollY;
 
     // Tools.
