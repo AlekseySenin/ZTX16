@@ -184,6 +184,14 @@ public static class Input
     [Syscall("input.mouse_button_pressed")]
     public static bool WasMouseButtonPressed(MouseButton button) => throw new NotInVmException();
 
+    /// <summary>True (the default) while the system mouse arrow is drawn over the display.</summary>
+    [Syscall("input.cursor_visible")]
+    public static bool IsCursorVisible() => throw new NotInVmException();
+
+    /// <summary>Shows or hides the system mouse arrow (hide it to draw your own cursor).</summary>
+    [Syscall("input.set_cursor_visible")]
+    public static void SetCursorVisible(bool visible) => throw new NotInVmException();
+
     /// <summary>True while a device occupies the gamepad slot.</summary>
     [Syscall("input.gamepad_connected")]
     public static bool IsGamepadConnected(int slot) => throw new NotInVmException();

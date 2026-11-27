@@ -76,8 +76,8 @@ public sealed class Image
         }
     }
 
-    /// <summary>A square brush of <paramref name="size"/> pixels at (x, y), clipped to a rectangle.</summary>
-    public void Brush(int x, int y, int size, int color, int clipX, int clipY, int clipWidth, int clipHeight)
+    /// <summary>A square or round brush of <paramref name="size"/> pixels at (x, y), clipped to a rectangle.</summary>
+    public void Brush(int x, int y, int size, bool round, int color, int clipX, int clipY, int clipWidth, int clipHeight)
     {
         int half = (size - 1) / 2;
         for (int dy = 0; dy < size; dy++)
@@ -85,7 +85,7 @@ public sealed class Image
             for (int dx = 0; dx < size; dx++)
             {
                 int px = x - half + dx, py = y - half + dy;
-                if (px >= clipX && py >= clipY && px < clipX + clipWidth && py < clipY + clipHeight)
+                if ((!round || InCircle(dx, dy, size)) && px >= clipX && py >= clipY && px < clipX + clipWidth && py < clipY + clipHeight)
                 {
                     Set(px, py, color);
                 }
@@ -94,14 +94,14 @@ public sealed class Image
     }
 
     /// <summary>Brushes along the line from (x0, y0) to (x1, y1) (Bresenham), so fast strokes leave no gaps.</summary>
-    public void Line(int x0, int y0, int x1, int y1, int size, int color, int clipX, int clipY, int clipWidth, int clipHeight)
+    public void Line(int x0, int y0, int x1, int y1, int size, bool round, int color, int clipX, int clipY, int clipWidth, int clipHeight)
     {
         int dx = Abs(x1 - x0), dy = -Abs(y1 - y0);
         int sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
         int error = dx + dy;
         while (true)
         {
-            Brush(x0, y0, size, color, clipX, clipY, clipWidth, clipHeight);
+            Brush(x0, y0, size, round, color, clipX, clipY, clipWidth, clipHeight);
             if (x0 == x1 && y0 == y1)
             {
                 return;
@@ -287,6 +287,19 @@ public sealed class Image
         }
 
         return result;
+    }
+
+    /// <summary>True if cell (dx, dy) of a size×size brush lies inside its circle (sizes 1–2 are full squares).</summary>
+    public static bool InCircle(int dx, int dy, int size)
+    {
+        if (size <= 2)
+        {
+            return true;
+        }
+
+        // Doubled coordinates around the centre, compared with the doubled radius.
+        int cx = (2 * dx) - (size - 1), cy = (2 * dy) - (size - 1);
+        return (cx * cx) + (cy * cy) <= (size * size) + 1;
     }
 
     private static int Abs(int value) => value < 0 ? -value : value;

@@ -82,8 +82,9 @@ public class PngImportTests
 
 public class GraphicsEditorTests
 {
-    private const int Zoom = 5;               // a 2×2-tile region fits the main screen at 5×
-    private const int MainY = 165;
+    private const int Zoom = 4;               // a 2×2-tile region fits the main screen (80×76) at 4×
+    private const int MainY = 168;
+    private const int PaletteY = 129, AreaY = 155, SettingsY = 79;
 
     private static EnvironmentDriver Start(byte[]? pixels = null)
     {
@@ -171,7 +172,7 @@ public class GraphicsEditorTests
     {
         using EnvironmentDriver env = Start();
         env.Click(93 + (5 * 8) + 2, 5 + (3 * 8) + 2);       // tile (5, 3) in the tilemap view
-        env.Click(2, MainY + 2);                            // a single tile shows at 10×: its pixel (0, 0)
+        env.Click(2, MainY + 2);                            // a single tile shows at 9×: its pixel (0, 0)
         Save(env);
         Assert.Equal(5, Pixel(ReadPixels(env, "/Art/tilemaps/art.png"), 40, 24));
     }
@@ -197,11 +198,11 @@ public class GraphicsEditorTests
     public void PaletteColourIsEditedAndSaved()
     {
         using EnvironmentDriver env = Start();
-        env.Click(76, 133 + 20);                            // MENU
+        env.Click(76, PaletteY + 20);                           // MENU
         env.Press(Key.Enter);                               // EDIT COLOR (of the primary colour, 5 = white)
         env.Press(Key.Left);                                // R 7 → 6
         env.Press(Key.Enter);
-        env.Click(76, 133 + 20);
+        env.Click(76, PaletteY + 20);
         env.Press(Key.Down);
         env.Press(Key.Down);
         env.Press(Key.Enter);                               // SAVE PALETTE (the project's palette)
@@ -249,5 +250,60 @@ public class GraphicsEditorTests
         env.Type("edit /Art/tilemaps/art.png");
         env.Text("y");                                      // save it first
         Assert.Equal(5, Pixel(ReadPixels(env, "/Art/tilemaps/other.png"), 0, 0));
+    }
+
+    [Fact]
+    public void AreaButtonsSelectARegionOfNByNTiles()
+    {
+        using EnvironmentDriver env = Start();
+        env.Click(22 + (2 * 11) + 5, AreaY + 3);            // "4": a 4×4-tile region, 32×32 pixels
+        env.Press(Key.F);
+        env.Click(2, MainY + 2);
+        Save(env);
+        byte[] saved = ReadPixels(env, "/Art/tilemaps/art.png");
+        Assert.Equal(5, Pixel(saved, 31, 31));
+        Assert.Equal(0, Pixel(saved, 32, 0));
+    }
+
+    [Fact]
+    public void ZoomSliderSetsTheMainScreenScale()
+    {
+        using EnvironmentDriver env = Start();
+        env.Click(88, MainY + 75);                          // top of the slider: 16×
+        env.Click(16 + 2, MainY + 2);                       // so x 18 is region pixel (1, 0)
+        Save(env);
+        byte[] saved = ReadPixels(env, "/Art/tilemaps/art.png");
+        Assert.Equal(5, Pixel(saved, 1, 0));
+        Assert.Equal(0, Pixel(saved, 4, 0));
+    }
+
+    [Fact]
+    public void RoundBrushWithTheSizeSlider()
+    {
+        using EnvironmentDriver env = Start();
+        env.Click(15, SettingsY + 10 + 3);                  // circle shape
+        env.Click(55, SettingsY + 2 + 3);                   // size slider → 5
+        env.Click(At(8, 8).X, At(8, 8).Y);
+        Save(env);
+        byte[] saved = ReadPixels(env, "/Art/tilemaps/art.png");
+        Assert.Equal(5, Pixel(saved, 8, 8));
+        Assert.Equal(5, Pixel(saved, 8, 6));
+        Assert.Equal(5, Pixel(saved, 10, 8));
+        Assert.Equal(5, Pixel(saved, 7, 7));
+        Assert.Equal(0, Pixel(saved, 6, 6));                // corners stay outside the circle
+        Assert.Equal(0, Pixel(saved, 10, 10));
+    }
+
+    [Fact]
+    public void SquareBrushOfSizeThreeFillsTheSquare()
+    {
+        using EnvironmentDriver env = Start();
+        env.Click(40, SettingsY + 2 + 3);                   // size slider → 3
+        env.Click(At(8, 8).X, At(8, 8).Y);
+        Save(env);
+        byte[] saved = ReadPixels(env, "/Art/tilemaps/art.png");
+        Assert.Equal(5, Pixel(saved, 7, 7));
+        Assert.Equal(5, Pixel(saved, 9, 9));
+        Assert.Equal(0, Pixel(saved, 10, 8));
     }
 }

@@ -720,3 +720,18 @@ structs, which the VM does not support; C# 12 uses arrays.
   properties, events, methods), summaries as plain ASCII text; `[EditorBrowsable(Never)]` plumbing is hidden. Served
   by `code.reference` (`ICodeAnalysis.ApiReference`); the host embeds `ZTX16.Sdk.xml` next to the reference
   assemblies so the single-file executable has it too.
+
+## Graphics editor controls and the system mouse arrow
+
+- Main screen 80×76 at the top left with a vertical **zoom slider** (1–16×, bottom to top) to its right; the wheel
+  still zooms. Under it the **AREA** row: 1 2 4 8 16 32 select an N×N-tile region at the current position (zoomed to
+  fit). Tool settings, rewritten as clickable buttons: tool name and **GRID** toggle; brush and eraser have **square /
+  circle** shape buttons and a **size slider** 1–8 (round: cells inside the circle, sizes 1–2 are squares; the
+  cursor preview outlines the exact shape); fill **AREA / COLOR**; select/paste **0 CLEAR / SOLID**.
+- **Tooltips**: resting the mouse ~⅓ s on a tool (name and key), a palette swatch, an AREA button, the zoom slider
+  or a setting shows a label next to the cursor.
+- **System mouse arrow**: the host draws a black-and-white pixel arrow over the composed frame (every app, scaled
+  with the display) and hides the OS cursor while it is over the 256×256 display (the OS cursor shows on the letterbox
+  borders and outside the window). `Input.SetCursorVisible(bool)` / `Input.IsCursorVisible()` (syscalls
+  `input.set_cursor_visible`, `input.cursor_visible`; per session, default visible) let a cartridge hide it to draw
+  its own cursor.

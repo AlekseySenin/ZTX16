@@ -35,6 +35,9 @@ public sealed class InputSystem
     /// <summary>Gamepad slots. Check <see cref="Gamepad.IsConnected"/> before use.</summary>
     public IReadOnlyList<Gamepad> Gamepads { get; }
 
+    /// <summary>True (the default) while the host draws the system mouse arrow over the display.</summary>
+    public bool CursorVisible { get; set; } = true;
+
     /// <summary>Queues a host event for the next tick. Called by the host backend.</summary>
     internal void Enqueue(in InputEvent inputEvent) => _pending.Enqueue(inputEvent);
 

@@ -37,6 +37,11 @@ internal sealed unsafe class SdlHost : IDisposable
     private bool _minimized;
     private readonly string _title;
 
+    // The system mouse arrow, drawn by the host over the display (the OS cursor is hidden above it).
+    private int _cursorX = -1, _cursorY = -1;       // render coordinates, top-left origin
+    private bool _mouseInWindow;
+    private bool _osCursorHidden;
+
     public SdlHost(HostOptions options, string title = "ZTX16")
     {
         _scale = options.Scale;
@@ -141,7 +146,7 @@ internal sealed unsafe class SdlHost : IDisposable
                 continue;
             }
 
-            Present(active.Session.Graphics);
+            Present(active.Session.Graphics, active.Session.Input);
             if (!environment.AfterTick())
             {
                 break;
@@ -186,7 +191,7 @@ internal sealed unsafe class SdlHost : IDisposable
             {
                 scheduler.TickStarted(now);
                 session.RunTick(scheduler.ToTimeSpan(now));
-                Present(session.Graphics);
+                Present(session.Graphics, session.Input);
             }
             else
             {
@@ -259,10 +264,29 @@ internal sealed unsafe class SdlHost : IDisposable
         }
     }
 
-    private void Present(GraphicsSystem graphics)
+    private void Present(GraphicsSystem graphics, ZTX16.Platform.Input.InputSystem input)
     {
         graphics.Compose(_frame);
         graphics.ConvertToArgb(_frame, _argb);
+        bool overDisplay = _mouseInWindow && _cursorX >= 0 && _cursorY >= 0 && _cursorX < Width && _cursorY < Height;
+        if (overDisplay != _osCursorHidden)
+        {
+            // Over the display the host arrow replaces the OS cursor; on the letterbox borders the OS one shows.
+            _osCursorHidden = overDisplay;
+            if (overDisplay)
+            {
+                SDL_HideCursor();
+            }
+            else
+            {
+                SDL_ShowCursor();
+            }
+        }
+
+        if (overDisplay && input.CursorVisible)
+        {
+            MouseCursor.Draw(_argb, Width, Height, _cursorX, _cursorY);
+        }
 
         fixed (uint* pixels = _argb)
         {
@@ -301,11 +325,26 @@ internal sealed unsafe class SdlHost : IDisposable
                 case SDL_EventType.SDL_EVENT_KEY_DOWN when HandleHostHotkey(e.key.scancode):
                     break;
 
+                case SDL_EventType.SDL_EVENT_WINDOW_MOUSE_ENTER:
+                    _mouseInWindow = true;
+                    break;
+
+                case SDL_EventType.SDL_EVENT_WINDOW_MOUSE_LEAVE:
+                    _mouseInWindow = false;
+                    break;
+
                 case SDL_EventType.SDL_EVENT_MOUSE_MOTION:
                 case SDL_EventType.SDL_EVENT_MOUSE_BUTTON_DOWN:
                 case SDL_EventType.SDL_EVENT_MOUSE_BUTTON_UP:
                     // Window pixels → logical 256×256 render coordinates (top-left origin).
                     SDL_ConvertEventToRenderCoordinates(_renderer, &e);
+                    if (e.Type == SDL_EventType.SDL_EVENT_MOUSE_MOTION)
+                    {
+                        _mouseInWindow = true;
+                        _cursorX = (int)MathF.Floor(e.motion.x);
+                        _cursorY = (int)MathF.Floor(e.motion.y);
+                    }
+
                     _input!.Translate(e);
                     break;
 

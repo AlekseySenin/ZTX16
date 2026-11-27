@@ -94,6 +94,8 @@ internal static class PlatformSyscalls
         Bind("input.mouse_wheel", _ => input.Mouse.WheelDelta);
         Bind("input.mouse_button_down", a => FromBool(input.Mouse[(MouseButton)ToI32(a[0])].IsDown));
         Bind("input.mouse_button_pressed", a => FromBool(input.Mouse[(MouseButton)ToI32(a[0])].Pressed));
+        Bind("input.cursor_visible", _ => FromBool(input.CursorVisible));
+        Bind("input.set_cursor_visible", a => { input.CursorVisible = ToI32(a[0]) != 0; return 0; });
 
         // Gamepads
         Bind("input.gamepad_connected", a => FromBool(Pad(a[0]).IsConnected));

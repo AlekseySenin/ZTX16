@@ -27,10 +27,13 @@ public sealed class Editor : ICartridge
     // Layout (lower-left origin).
     private const int ToolbarY = 245;
     private const int LeftWidth = 92;
-    private const int MainX = 0, MainY = 165, MainWidth = 87, MainHeight = 80;
-    private const int PaletteY = 133;
-    private const int ToolsY = 110;
-    private const int SettingsY = 96;
+    private const int MainX = 0, MainY = 168, MainWidth = 80, MainHeight = 76;
+    private const int ZoomX = 86, ZoomWidth = 6;           // zoom slider right of the main screen
+    private const int AreaY = 155;                         // tile region size buttons
+    private const int PaletteY = 129;
+    private const int ToolsY = 106;
+    private const int SettingsY = 79;
+    private static readonly int[] AreaSizes = { 1, 2, 4, 8, 16, 32 };
     private const int ViewX = 93, ViewY = 5, ViewWidth = 158, ViewHeight = 240;
     private const int Bar = 5;
 
@@ -87,6 +90,9 @@ public sealed class Editor : ICartridge
     private int _primary = 5, _secondary = 0;
     private int _brushSize = 1;
     private bool _fillGlobal;
+    private bool _roundBrush;
+    private int _hoverTicks;
+    private int _hoverX = -1, _hoverY = -1;
     private bool _pasteTransparent = true;
     private bool _painting;
     private int _paintColor;
@@ -152,6 +158,19 @@ public sealed class Editor : ICartridge
 
         PollDialog();
         int mx = Input.MouseX, my = Input.MouseY;
+
+        // Tooltips appear once the mouse rests on a control for a moment.
+        if (mx == _hoverX && my == _hoverY && !Input.IsMouseButtonDown(MouseButton.Left))
+        {
+            _hoverTicks++;
+        }
+        else
+        {
+            _hoverTicks = 0;
+            _hoverX = mx;
+            _hoverY = my;
+        }
+
         if (_panel == PanelNone)
         {
             Mouse(mx, my);
@@ -378,10 +397,29 @@ public sealed class Editor : ICartridge
             return;
         }
 
-        if (leftPressed && In(mx, my, 0, SettingsY, LeftWidth, 14))
+        // Region size buttons: N×N tiles at the current position.
+        if (leftPressed && In(mx, my, 0, AreaY, LeftWidth, 8))
         {
-            SettingsClick(mx);
+            int button = AreaButtonAt(mx);
+            if (button >= 0)
+            {
+                SelectTiles(_selTileX, _selTileY, AreaSizes[button], AreaSizes[button]);
+            }
+
+            return;
         }
+
+        if (leftPressed && In(mx, my, 0, SettingsY, LeftWidth, 27))
+        {
+            SettingsClick(mx, my);
+        }
+    }
+
+    // Region size button under x (or -1): label "AREA" then buttons 10 pixels wide.
+    private static int AreaButtonAt(int mx)
+    {
+        int index = (mx - 22) / 11;
+        return mx >= 22 && index < AreaSizes.Length ? index : -1;
     }
 
     private void MainMouse(int mx, int my, bool left, bool right, bool leftPressed, bool rightPressed, int wheel)
@@ -391,9 +429,7 @@ public sealed class Editor : ICartridge
         int py = oy + _mainScrollY + FloorDiv(my - MainY, _zoom);
         if (wheel != 0)
         {
-            _zoom = Clamp(_zoom + wheel, 1, 16);
-            ClampMainScroll();
-            _backgroundDirty = true;
+            SetZoom(Clamp(_zoom + wheel, MinZoom, MaxZoom));
         }
 
         if (_pasting)
@@ -462,11 +498,11 @@ public sealed class Editor : ICartridge
             _paintColor = _tool == ToolEraser ? 0 : leftPressed ? _primary : _secondary;
             _lastPaintX = px;
             _lastPaintY = py;
-            _image.Brush(px, py, _brushSize, _paintColor, ox, oy, w, h);
+            _image.Brush(px, py, _brushSize, _roundBrush, _paintColor, ox, oy, w, h);
         }
         else if (_painting && (left || right))
         {
-            _image.Line(_lastPaintX, _lastPaintY, px, py, _brushSize, _paintColor, ox, oy, w, h);
+            _image.Line(_lastPaintX, _lastPaintY, px, py, _brushSize, _roundBrush, _paintColor, ox, oy, w, h);
             _lastPaintX = px;
             _lastPaintY = py;
         }
@@ -501,25 +537,44 @@ public sealed class Editor : ICartridge
         }
     }
 
-    private void SettingsClick(int mx)
-    {
-        if (_tool == ToolBrush || _tool == ToolEraser)
-        {
-            if (mx >= 40 && mx < 48 && _brushSize > 1) _brushSize--;
-            if (mx >= 56 && mx < 64 && _brushSize < 8) _brushSize++;
-        }
-        else if (_tool == ToolFill)
-        {
-            _fillGlobal = !_fillGlobal;
-        }
-        else if (_tool == ToolSelect || _pasting)
-        {
-            _pasteTransparent = !_pasteTransparent;
-        }
+    // Settings panel rows (bottom edge y): title row (tool name, GRID), option row, slider row.
+    private const int SettingsTitleY = SettingsY + 19;
+    private const int SettingsOptionY = SettingsY + 10;
+    private const int SettingsSliderY = SettingsY + 2;
+    private const int SliderX = 22, SliderWidth = 58;
 
-        if (mx >= 70)
+    private void SettingsClick(int mx, int my)
+    {
+        if (my >= SettingsTitleY && mx >= 68)
         {
             _grid = !_grid;
+            return;
+        }
+
+        bool brush = (_tool == ToolBrush || _tool == ToolEraser) && !_pasting;
+        if (my >= SettingsOptionY && my < SettingsOptionY + 8)
+        {
+            if (brush)
+            {
+                if (mx >= 2 && mx < 11) _roundBrush = false;          // square
+                if (mx >= 12 && mx < 21) _roundBrush = true;          // circle
+            }
+            else if (_tool == ToolFill && !_pasting)
+            {
+                _fillGlobal = mx >= 34;                               // AREA | COLOR
+            }
+            else if (_tool == ToolSelect || _pasting)
+            {
+                _pasteTransparent = mx < 46;                          // 0 CLEAR | SOLID
+            }
+
+            return;
+        }
+
+        if (brush && my >= SettingsSliderY && my < SettingsSliderY + 7 && mx >= SliderX - 2)
+        {
+            _dragBar = 6;
+            DragScrollbar(mx, my);
         }
     }
 
@@ -531,6 +586,7 @@ public sealed class Editor : ICartridge
         else if (In(mx, my, ViewX + ViewWidth, ViewY, Bar, ViewHeight)) _dragBar = 2;
         else if (MainScrollsX() && In(mx, my, MainX, MainY - Bar, MainWidth, Bar)) _dragBar = 3;
         else if (MainScrollsY() && In(mx, my, MainX + MainWidth, MainY, Bar, MainHeight)) _dragBar = 4;
+        else if (In(mx, my, ZoomX, MainY, ZoomWidth, MainHeight)) _dragBar = 5;
         if (_dragBar != 0)
         {
             DragScrollbar(mx, my);
@@ -561,6 +617,34 @@ public sealed class Editor : ICartridge
             _mainScrollY = Clamp(((my - MainY) * MainRangeY()) / MainHeight, 0, MainRangeY());
             _backgroundDirty = true;
         }
+        else if (_dragBar == 5)
+        {
+            SetZoom(ZoomFromSlider(my));
+        }
+        else if (_dragBar == 6)
+        {
+            _brushSize = Clamp(1 + (((mx - SliderX) * 8) / SliderWidth), 1, 8);
+        }
+    }
+
+    // Zoom slider: bottom = 1, top = 16.
+    private const int MinZoom = 1, MaxZoom = 16;
+
+    private static int ZoomFromSlider(int my) => Clamp(MinZoom + (((my - MainY) * MaxZoom) / MainHeight), MinZoom, MaxZoom);
+
+    private static int SliderFromZoom(int zoom) => MainY + (((zoom - MinZoom) * (MainHeight - 4)) / (MaxZoom - MinZoom));
+
+    private void SetZoom(int zoom)
+    {
+        if (zoom == _zoom)
+        {
+            return;
+        }
+
+        _zoom = zoom;
+        _mainScrollX = Clamp(_mainScrollX, 0, MainRangeX());
+        _mainScrollY = Clamp(_mainScrollY, 0, MainRangeY());
+        _backgroundDirty = true;
     }
 
     private int MainRangeX() => Max(0, (_selTileWidth * 8) - (MainWidth / _zoom));
@@ -1214,8 +1298,11 @@ public sealed class Editor : ICartridge
         DrawPalette();
         DrawTools();
         DrawSettings();
+        DrawAreaRow();
+        DrawZoomSlider();
         DrawAnimationPlaceholder();
         DrawScrollbars();
+        DrawTooltip();
         if (_panel == PanelExplorer) DrawExplorer();
         if (_panel == PanelPrompt) DrawPrompt();
         if (_panel == PanelConfirm) DrawConfirm();
@@ -1308,7 +1395,36 @@ public sealed class Editor : ICartridge
             // Brush outline under the cursor.
             int half = (_brushSize - 1) / 2;
             int cx = MainX + ((FloorDiv(mx - MainX, _zoom) - half) * _zoom), cy = MainY + ((FloorDiv(my - MainY, _zoom) - half) * _zoom);
-            Outline(Ui, cx, cy, _brushSize * _zoom, _brushSize * _zoom, MainX, MainY, MainWidth, MainHeight, _theme.Light);
+            if (_roundBrush && _brushSize > 2)
+            {
+                BrushShapeOutline(cx, cy, _zoom, MainX, MainY, MainWidth, MainHeight, _theme.Light);
+            }
+            else
+            {
+                Outline(Ui, cx, cy, _brushSize * _zoom, _brushSize * _zoom, MainX, MainY, MainWidth, MainHeight, _theme.Light);
+            }
+        }
+    }
+
+    // The outline of the round brush: an edge wherever a brush cell borders a cell outside the circle.
+    private void BrushShapeOutline(int x, int y, int scale, int clipX, int clipY, int clipWidth, int clipHeight, int color)
+    {
+        int size = _brushSize;
+        for (int dy = 0; dy < size; dy++)
+        {
+            for (int dx = 0; dx < size; dx++)
+            {
+                if (!Image.InCircle(dx, dy, size))
+                {
+                    continue;
+                }
+
+                int px = x + (dx * scale), py = y + (dy * scale);
+                if (dx == 0 || !Image.InCircle(dx - 1, dy, size)) VLine(Ui, px, py, scale, clipX, clipY, clipWidth, clipHeight, color);
+                if (dx == size - 1 || !Image.InCircle(dx + 1, dy, size)) VLine(Ui, px + scale - 1, py, scale, clipX, clipY, clipWidth, clipHeight, color);
+                if (dy == 0 || !Image.InCircle(dx, dy - 1, size)) HLine(Ui, px, py, scale, clipX, clipY, clipWidth, clipHeight, color);
+                if (dy == size - 1 || !Image.InCircle(dx, dy + 1, size)) HLine(Ui, px, py + scale - 1, scale, clipX, clipY, clipWidth, clipHeight, color);
+            }
         }
     }
 
@@ -1404,34 +1520,174 @@ public sealed class Editor : ICartridge
 
     private void DrawSettings()
     {
-        int y = SettingsY;
-        Graphics.FillRect(Ui, 0, y + 14, LeftWidth, 1, _theme.Mid);
+        Graphics.FillRect(Ui, 0, SettingsY + 26, LeftWidth, 1, _theme.Mid);
         string name = _pasting ? "PASTE" : ToolNames[_tool];
-        Text.Draw(Ui, name, 2, y + 7, _theme.Accent, Font);
-        if (_tool == ToolBrush || _tool == ToolEraser)
+        Text.Draw(Ui, name, 2, SettingsTitleY + 1, _theme.Accent, Font);
+        Button(68, SettingsTitleY, 21, "GRID", _grid);
+
+        bool brush = (_tool == ToolBrush || _tool == ToolEraser) && !_pasting;
+        int y = SettingsOptionY;
+        if (brush)
         {
-            Text.Draw(Ui, "SIZE  -  " + _brushSize.ToString() + "  +", 2 + 16, y + 1, _theme.Light, Font);
+            // Shape: square | circle.
+            Button(2, y, 9, "", !_roundBrush);
+            Graphics.FillRect(Ui, 4, y + 2, 5, 4, !_roundBrush ? _theme.Dark : _theme.Light);
+            Button(12, y, 9, "", _roundBrush);
+            int ink = _roundBrush ? _theme.Dark : _theme.Light;
+            Graphics.FillRect(Ui, 15, y + 2, 3, 4, ink);
+            Graphics.FillRect(Ui, 14, y + 3, 5, 2, ink);
+            Text.Draw(Ui, _roundBrush ? "CIRCLE" : "SQUARE", 24, y + 1, _theme.Light, Font);
+
+            // Size slider 1..8.
+            int sy = SettingsSliderY;
+            Text.Draw(Ui, "SIZE", 2, sy + 1, _theme.Light, Font);
+            Graphics.FillRect(Ui, SliderX, sy + 3, SliderWidth, 1, _theme.Mid);
+            int size = _brushSize;
+            int thumb = SliderX + (((size - 1) * (SliderWidth - 3)) / 7);
+            Graphics.FillRect(Ui, thumb, sy, 3, 7, _theme.Accent);
+            Text.Draw(Ui, size.ToString(), SliderX + SliderWidth + 3, sy + 1, _theme.Light, Font);
         }
-        else if (_tool == ToolFill)
+        else if (_tool == ToolFill && !_pasting)
         {
-            Text.Draw(Ui, _fillGlobal ? "ALL OF COLOR" : "AREA", 2, y + 1, _theme.Light, Font);
+            Button(2, y, 31, "AREA", !_fillGlobal);
+            Button(34, y, 27, "COLOR", _fillGlobal);
         }
         else if (_tool == ToolSelect || _pasting)
         {
-            Text.Draw(Ui, _pasteTransparent ? "PASTE: 0 CLEAR" : "PASTE: SOLID", 2, y + 1, _theme.Light, Font);
+            Button(2, y, 43, "0 CLEAR", _pasteTransparent);
+            Button(46, y, 27, "SOLID", !_pasteTransparent);
         }
+    }
 
-        Text.Draw(Ui, _grid ? "GRID+" : "GRID-", 70, y + 7, _theme.Light, Font);
+    // A small toggle button: the accent background when on.
+    private void Button(int x, int y, int width, string label, bool on)
+    {
+        Graphics.FillRect(Ui, x, y, width, 8, on ? _theme.Accent : _theme.Mid);
+        if (label.Length > 0)
+        {
+            Text.Draw(Ui, label, x + ((width - (label.Length * CharWidth)) / 2) + 1, y + 1, on ? _theme.Dark : _theme.Light, Font);
+        }
+    }
+
+    // Region size buttons: AREA 1 2 4 8 16 32 (tiles per side).
+    private void DrawAreaRow()
+    {
+        Text.Draw(Ui, "AREA", 2, AreaY + 1, _theme.Light, Font);
+        for (int i = 0; i < AreaSizes.Length; i++)
+        {
+            int n = AreaSizes[i];
+            Button(22 + (i * 11), AreaY, 10, n.ToString(), _selTileWidth == n && _selTileHeight == n);
+        }
+    }
+
+    // Vertical zoom slider right of the main screen: bottom 1x, top 16x.
+    private void DrawZoomSlider()
+    {
+        Graphics.FillRect(Ui, ZoomX, MainY, ZoomWidth, MainHeight, _theme.Dark);
+        Graphics.FillRect(Ui, ZoomX + 2, MainY + 1, 2, MainHeight - 2, _theme.Mid);
+        Graphics.FillRect(Ui, ZoomX, SliderFromZoom(_zoom), ZoomWidth, 4, _theme.Accent);
     }
 
     private void DrawAnimationPlaceholder()
     {
-        Graphics.FillRect(Ui, 0, 95, LeftWidth, 1, _theme.Mid);
-        Text.Draw(Ui, "ANIMATION", 2, 86, _theme.Mid, Font);
-        Text.Draw(Ui, "timeline, frames", 2, 76, _theme.Mid, Font);
-        Text.Draw(Ui, "and sprites:", 2, 69, _theme.Mid, Font);
-        Text.Draw(Ui, "next stage", 2, 62, _theme.Mid, Font);
+        Graphics.FillRect(Ui, 0, 78, LeftWidth, 1, _theme.Mid);
+        Text.Draw(Ui, "ANIMATION", 2, 69, _theme.Mid, Font);
+        Text.Draw(Ui, "timeline, frames", 2, 59, _theme.Mid, Font);
+        Text.Draw(Ui, "and sprites:", 2, 52, _theme.Mid, Font);
+        Text.Draw(Ui, "next stage", 2, 45, _theme.Mid, Font);
         Graphics.FillRect(Ui, LeftWidth - 1, 0, 1, ToolbarY, _theme.Mid);
+    }
+
+    // ---- tooltips -----------------------------------------------------------------------------------------
+
+    private const int TooltipDelay = 20;
+
+    private void DrawTooltip()
+    {
+        if (_hoverTicks < TooltipDelay || _panel != PanelNone)
+        {
+            return;
+        }
+
+        int mx = Input.MouseX, my = Input.MouseY;
+        string text = TooltipAt(mx, my);
+        if (text.Length == 0)
+        {
+            return;
+        }
+
+        int width = (text.Length * CharWidth) + 5, height = 9;
+        int x = Clamp(mx + 6, 0, Screen - width), y = my - height - 4;
+        if (y < 0)
+        {
+            y = my + 8;
+        }
+
+        Graphics.FillRect(Ui, x, y, width, height, _theme.Dark);
+        Outline(Ui, x, y, width, height, 0, 0, Screen, Screen, _theme.Light);
+        Text.Draw(Ui, text, x + 3, y + 2, _theme.Light, Font);
+    }
+
+    private static readonly string[] ToolKeys = { "B", "E", "F", "I", "S", "CTRL+C", "CTRL+V", "H", "V", "R" };
+
+    private string TooltipAt(int mx, int my)
+    {
+        if (In(mx, my, ZoomX, MainY, ZoomWidth, MainHeight))
+        {
+            int zoom = _zoom;
+            return "ZOOM " + zoom.ToString() + "X";
+        }
+
+        if (In(mx, my, 0, ToolsY, LeftWidth, 23))
+        {
+            int col = (mx - 2) / 11, row = (ToolsY + 22 - my) / 11;
+            int index = (row * 8) + col;
+            if (mx >= 2 && col < 8 && index < IconCount && ((mx - 2) % 11) < 10)
+            {
+                return ToolNames[index] + " (" + ToolKeys[index] + ")";
+            }
+
+            return "";
+        }
+
+        if (In(mx, my, 0, AreaY, LeftWidth, 8))
+        {
+            int button = AreaButtonAt(mx);
+            if (button >= 0)
+            {
+                int n = AreaSizes[button];
+                return "REGION " + n.ToString() + "X" + n.ToString() + " TILES";
+            }
+
+            return "";
+        }
+
+        if (In(mx, my, 0, PaletteY, LeftWidth, 18))
+        {
+            int col = (mx - 2) / 5, row = (PaletteY + 17 - my) / 8;
+            int index = (row * 16) + col;
+            if (mx >= 2 && col < 16 && index < Theme.Colors)
+            {
+                return index == 0 ? "COLOR 0 (TRANSPARENT)" : "COLOR " + index.ToString();
+            }
+
+            return "";
+        }
+
+        if (In(mx, my, 0, SettingsY, LeftWidth, 27))
+        {
+            bool brush = (_tool == ToolBrush || _tool == ToolEraser) && !_pasting;
+            if (my >= SettingsTitleY && mx >= 68) return "TILE GRID (G)";
+            if (brush && my >= SettingsOptionY && my < SettingsOptionY + 8)
+            {
+                if (mx >= 2 && mx < 11) return "SQUARE BRUSH";
+                if (mx >= 12 && mx < 21) return "ROUND BRUSH";
+            }
+
+            if (brush && my >= SettingsSliderY && my < SettingsSliderY + 7) return "BRUSH SIZE ([ ])";
+        }
+
+        return "";
     }
 
     private void DrawScrollbars()
